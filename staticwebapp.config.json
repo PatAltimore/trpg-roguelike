@@ -1,0 +1,6 @@
+{
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/js/*", "*.{png,jpg,gif,ico,css}"]
+  }
+}
