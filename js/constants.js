@@ -46,7 +46,7 @@ export const C = {
   PLAYER_DONE:'#506880',
   ENEMY:     '#e02020',
   MOVE_HL:   'rgba(60,120,255,0.30)',
-  ATK_HL:    'rgba(255,60,60,0.30)',
+  ATK_HL:    'rgba(255,40,40,0.45)',
   CURSOR:    '#ffff00',
   SIDE_BG:   '#0d0d1a',
   SIDE_BD:   '#4040a0',

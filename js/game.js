@@ -67,8 +67,10 @@ class Game {
     /* tutorial */
     this.tut = null;
 
-    this.cv.addEventListener('click',     e => this._click(e));
-    this.cv.addEventListener('mousemove', e => this._hover(e));
+    this.cv.addEventListener('click',       e => this._click(e));
+    this.cv.addEventListener('contextmenu', e => { e.preventDefault(); this._cancel(); });
+    this.cv.addEventListener('mousemove',   e => this._hover(e));
+    document.addEventListener('keydown',    e => { if (e.key === 'Escape') this._cancel(); });
     this._loop();
   }
 
@@ -239,6 +241,31 @@ class Game {
       return;
     }
     this._doCombat(this.sel, tgt);
+  }
+
+  /* ── cancel (right-click / Escape) ── */
+  _cancel() {
+    if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
+        this.state === S_WIN || this.state === S_LOSE || this.state === S_TITLE) return;
+
+    SFX.menuBack();
+    if (this.state === S_ATK_SELECT) {
+      /* back to action menu */
+      this._showActionMenu();
+    } else if (this.state === S_ACTION_MENU) {
+      /* undo move, back to unit selected */
+      if (this.sel && this._prevPos) {
+        this.sel.x = this._prevPos.x;
+        this.sel.y = this._prevPos.y;
+        this.sel.moved = false;
+        this._select(this.sel);
+      } else {
+        this._deselect();
+      }
+    } else if (this.state === S_UNIT_SEL) {
+      /* deselect unit */
+      this._deselect();
+    }
   }
 
   /* ═══════════ COMBAT ═══════════ */

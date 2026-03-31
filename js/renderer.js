@@ -1,9 +1,9 @@
 import {
   TILE, COLS, ROWS, SIDEBAR_W, CANVAS_W, CANVAS_H, C,
   T_PLAIN, T_FOREST, T_MOUNTAIN, T_WATER, T_WALL, T_ROAD, T_FORT,
-  S_TITLE, S_ACTION_MENU, S_WIN, S_LOSE, S_ATK_SELECT,
+  S_TITLE, S_ACTION_MENU, S_WIN, S_LOSE, S_ATK_SELECT, S_COMBAT_ANIM,
 } from './constants.js';
-import { forecast, canCounter } from './combat.js';
+import { forecast, canCounter, inRange } from './combat.js';
 
 const FONT = '"Press Start 2P", monospace';
 
@@ -33,6 +33,7 @@ export class Renderer {
     this._cursor(g);
     this._sidebar(g);
     if (g.state === S_ACTION_MENU) this._menu(g);
+    if (g.state === S_ATK_SELECT) this._atkPrompt();
     this._tutBanner(g);
     if (g.state === S_WIN || g.state === S_LOSE) this._overlay(g);
   }
@@ -169,6 +170,25 @@ export class Renderer {
       const p = Math.sin(this.t * 0.15) * 2;
       c.strokeStyle = '#ffff00'; c.lineWidth = 2;
       c.strokeRect(x+4-p, y+0-p, 32+p*2, 34+p*2);
+    }
+
+    /* attack target indicator — pulsing crosshair on targetable enemies */
+    if (g.state === S_ATK_SELECT && !u.isPlayer && g.sel && inRange(g.sel, u.x, u.y)) {
+      const pulse = 0.6 + Math.sin(this.t * 0.2) * 0.4;
+      c.strokeStyle = `rgba(255,255,0,${pulse})`;
+      c.lineWidth = 3;
+      /* crosshair corners */
+      const cx = x + T/2, cy = y + T/2, s = 16 + Math.sin(this.t * 0.15) * 2;
+      c.beginPath();
+      c.moveTo(cx - s, cy - s); c.lineTo(cx - s + 8, cy - s);
+      c.moveTo(cx - s, cy - s); c.lineTo(cx - s, cy - s + 8);
+      c.moveTo(cx + s, cy - s); c.lineTo(cx + s - 8, cy - s);
+      c.moveTo(cx + s, cy - s); c.lineTo(cx + s, cy - s + 8);
+      c.moveTo(cx - s, cy + s); c.lineTo(cx - s + 8, cy + s);
+      c.moveTo(cx - s, cy + s); c.lineTo(cx - s, cy + s - 8);
+      c.moveTo(cx + s, cy + s); c.lineTo(cx + s - 8, cy + s);
+      c.moveTo(cx + s, cy + s); c.lineTo(cx + s, cy + s - 8);
+      c.stroke();
     }
 
     /* HP bar */
@@ -381,6 +401,23 @@ export class Renderer {
     c.font = `10px ${FONT}`;
     c.textAlign = 'center';
     c.fillText('\u25B6 ' + g.tut.msg, mapW / 2, 30);
+  }
+
+  /* ═══════════ ATTACK SELECT PROMPT ═══════════ */
+  _atkPrompt() {
+    const c = this.cx;
+    const mapW = COLS * TILE;
+    const mapH = ROWS * TILE;
+    const pulse = 0.7 + Math.sin(this.t * 0.1) * 0.3;
+    c.fillStyle = `rgba(60,0,0,${0.85 * pulse})`;
+    c.fillRect(0, mapH - 32, mapW, 32);
+    c.strokeStyle = `rgba(255,80,80,${0.8 * pulse})`;
+    c.lineWidth = 1;
+    c.strokeRect(0, mapH - 32, mapW, 32);
+    c.fillStyle = `rgba(255,200,200,${pulse})`;
+    c.font = `8px ${FONT}`;
+    c.textAlign = 'center';
+    c.fillText('\u2694 Click a target to attack  \u2022  Right-click / click empty to cancel', mapW / 2, mapH - 12);
   }
 
   _overlay(g) {
