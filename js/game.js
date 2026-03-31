@@ -170,7 +170,19 @@ class Game {
     const sb = this.ren.soundBtn;
     if (sb && px >= sb.x && px <= sb.x + sb.w && py >= sb.y && py <= sb.y + sb.h) { toggleMute(); return; }
 
-    if (this.state === S_TITLE)  { SFX.titleMelody(); this._startLevel(); return; }
+    if (this.state === S_TITLE) {
+      const btns = this.ren._titleBtns;
+      if (btns) {
+        const hit = (b) => b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
+        if (hit(btns.tutorial)) {
+          SFX.titleMelody(); this.floor = 1; this._startLevel(); return;
+        }
+        if (hit(btns.start)) {
+          SFX.titleMelody(); this.floor = 2; this._startLevel(); return;
+        }
+      }
+      return;
+    }
     if (this.state === S_WIN)    { this.floor++; this._startLevel(); return; }
     if (this.state === S_LOSE)   { this.floor = 1; this.players = []; this._startLevel(); return; }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM) return;
@@ -238,7 +250,7 @@ class Game {
     const b = this._menuBounds;
     if (!b || px < b.x || px > b.x + b.w || py < b.y || py > b.y + b.h) return;
 
-    const idx = Math.floor((py - b.y - 14) / 36);
+    const idx = Math.floor((py - b.y - 20) / 40);
     if (idx < 0 || idx >= this.menuOpts.length) return;
     const opt = this.menuOpts[idx];
     if (!opt.on) return;

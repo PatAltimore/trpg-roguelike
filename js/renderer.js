@@ -70,17 +70,31 @@ export class Renderer {
     c.font = `10px ${FONT}`;
     c.fillText('ROGUELIKE TACTICS RPG', mx, my - 72);
 
-    if (Math.floor(this.t / 30) % 2 === 0) {
-      c.fillStyle = C.TXT;
-      c.font = `10px ${FONT}`;
-      c.fillText('CLICK TO START', mx, my + 100);
-    }
+    /* menu buttons */
+    const bw = 200, bh = 38, gap = 14;
+    const bx = mx - bw / 2;
+    const by1 = my + 80, by2 = by1 + bh + gap;
+
+    /* TUTORIAL button */
+    c.fillStyle = '#1a2a60'; c.fillRect(bx, by1, bw, bh);
+    c.strokeStyle = '#4060d0'; c.lineWidth = 2; c.strokeRect(bx, by1, bw, bh);
+    c.fillStyle = '#80b0ff'; c.font = `10px ${FONT}`; c.textAlign = 'center';
+    c.fillText('TUTORIAL', mx, by1 + 24);
+
+    /* START button */
+    c.fillStyle = '#2a1a10'; c.fillRect(bx, by2, bw, bh);
+    c.strokeStyle = '#c08030'; c.lineWidth = 2; c.strokeRect(bx, by2, bw, bh);
+    c.fillStyle = C.GOLD; c.font = `10px ${FONT}`;
+    c.fillText('START GAME', mx, by2 + 24);
+
+    /* store button bounds for click detection */
+    this._titleBtns = { tutorial: { x: bx, y: by1, w: bw, h: bh }, start: { x: bx, y: by2, w: bw, h: bh } };
 
     c.fillStyle = '#606060';
     c.font = `7px ${FONT}`;
-    c.fillText('Select unit \u2192 click destination \u2192 Attack / Wait', mx, my + 130);
-    c.fillText('Defeat all enemies to advance.  Lord dies = Game Over.', mx, my + 148);
-    c.fillText('Weapon triangle: Sword > Axe > Lance > Sword', mx, my + 166);
+    c.fillText('Select unit \u2192 click destination \u2192 Attack / Wait', mx, by2 + bh + 24);
+    c.fillText('Defeat all enemies to advance.  Lord dies = Game Over.', mx, by2 + bh + 42);
+    c.fillText('Weapon triangle: Sword > Axe > Lance > Sword', mx, by2 + bh + 60);
   }
 
   /* ── Pixel art battle scene for title screen ── */
@@ -517,33 +531,38 @@ export class Renderer {
 
   _menu(g) {
     const c = this.cx;
-    const itemH = 36, pad = 14;
-    const mw = 150, mh = g.menuOpts.length * itemH + pad * 2;
+    const itemH = 40, pad = 12;
+    const sx = COLS * TILE;
+    const sw = SIDEBAR_W;
+    const mw = sw - 20, mh = g.menuOpts.length * itemH + pad * 2;
+    const mx = sx + 10;
+    /* place below terrain panel area, roughly mid-sidebar */
+    const my = 340;
 
-    /* position menu offset from unit so it doesn't cover the tile */
-    let mx = (g.menuPos.x + 1) * TILE + 4;
-    let my = g.menuPos.y * TILE - 10;
-    if (mx + mw > COLS * TILE) mx = (g.menuPos.x - 1) * TILE - mw + TILE - 4;
-    if (my + mh > ROWS * TILE) my = ROWS * TILE - mh;
-    if (my < 0) my = 0;
+    /* background */
+    c.fillStyle = '#0a0a20'; c.fillRect(mx - 2, my, mw + 4, mh);
+    c.strokeStyle = '#6060d0'; c.lineWidth = 2; c.strokeRect(mx - 2, my, mw + 4, mh);
 
-    /* semi-transparent background */
-    c.fillStyle = 'rgba(8,8,24,0.92)'; c.fillRect(mx, my, mw, mh);
-    c.strokeStyle = '#5050d0'; c.lineWidth = 2; c.strokeRect(mx, my, mw, mh);
+    /* header */
+    c.fillStyle = '#8080cc'; c.font = `8px ${FONT}`; c.textAlign = 'center';
+    c.fillText('ACTION', sx + sw / 2, my + 12);
 
     g.menuOpts.forEach((opt, i) => {
-      const oy = my + pad + i * itemH;
-      /* hover highlight for the item under cursor */
-      if (i === g.menuIdx) {
-        c.fillStyle = '#303090'; c.fillRect(mx + 3, oy - 4, mw - 6, itemH - 4);
+      const oy = my + pad + 8 + i * itemH;
+      /* highlight */
+      c.fillStyle = opt.on ? '#202060' : '#101020';
+      c.fillRect(mx + 2, oy - 6, mw - 4, itemH - 6);
+      if (opt.on) {
+        c.strokeStyle = '#4040a0'; c.lineWidth = 1;
+        c.strokeRect(mx + 2, oy - 6, mw - 4, itemH - 6);
       }
       c.fillStyle = opt.on ? '#ffffff' : '#404050';
-      c.font = `10px ${FONT}`; c.textAlign = 'left';
-      c.fillText(opt.label, mx + 14, oy + 16);
+      c.font = `10px ${FONT}`; c.textAlign = 'center';
+      c.fillText(opt.label, sx + sw / 2, oy + 14);
     });
 
     /* store bounds for click detection */
-    g._menuBounds = { x: mx, y: my, w: mw, h: mh };
+    g._menuBounds = { x: mx - 2, y: my, w: mw + 4, h: mh };
   }
 
   _endBtn(sx, y, sw) {
