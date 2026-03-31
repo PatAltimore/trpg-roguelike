@@ -3,8 +3,13 @@
    No audio files needed — everything is generated on the fly. */
 
 let ctx = null;
+let muted = false;
+
+export function isMuted() { return muted; }
+export function toggleMute() { muted = !muted; return muted; }
 
 function ensure() {
+  if (muted) return null;
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
   if (ctx.state === 'suspended') ctx.resume();
   return ctx;
@@ -12,6 +17,7 @@ function ensure() {
 
 function osc(type, freq, dur, vol = 0.15, detune = 0) {
   const c = ensure();
+  if (!c) return;
   const o = c.createOscillator();
   const g = c.createGain();
   o.type = type;
@@ -26,6 +32,7 @@ function osc(type, freq, dur, vol = 0.15, detune = 0) {
 
 function noise(dur, vol = 0.08) {
   const c = ensure();
+  if (!c) return;
   const buf = c.createBuffer(1, c.sampleRate * dur, c.sampleRate);
   const data = buf.getChannelData(0);
   for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
@@ -40,6 +47,7 @@ function noise(dur, vol = 0.08) {
 
 function sweep(type, f1, f2, dur, vol = 0.12) {
   const c = ensure();
+  if (!c) return;
   const o = c.createOscillator();
   const g = c.createGain();
   o.type = type;
@@ -136,5 +144,41 @@ export const SFX = {
   start() {
     const notes = [330, 392, 523, 659];
     notes.forEach((f, i) => setTimeout(() => osc('square', f, 0.15, 0.1), i * 130));
+  },
+
+  /* ~4 second heroic title melody — plays once on first click */
+  titleMelody() {
+    /* melody: heroic ascending phrase, quick turnaround, resolving fanfare */
+    const melody = [
+      /* note, delay(ms), dur, type, vol */
+      [262, 0,    0.18, 'square', 0.10],    /* C4  */
+      [330, 180,  0.18, 'square', 0.10],    /* E4  */
+      [392, 360,  0.18, 'square', 0.10],    /* G4  */
+      [523, 540,  0.30, 'square', 0.12],    /* C5 (hold) */
+      [494, 900,  0.14, 'square', 0.10],    /* B4  */
+      [523, 1060, 0.14, 'square', 0.10],    /* C5  */
+      [587, 1220, 0.30, 'square', 0.12],    /* D5 (hold) */
+      [523, 1600, 0.14, 'square', 0.10],    /* C5  */
+      [494, 1760, 0.14, 'square', 0.10],    /* B4  */
+      [440, 1920, 0.14, 'square', 0.10],    /* A4  */
+      [392, 2100, 0.30, 'square', 0.12],    /* G4 (hold) */
+      [330, 2500, 0.14, 'square', 0.10],    /* E4  */
+      [392, 2660, 0.18, 'square', 0.10],    /* G4  */
+      [523, 2840, 0.18, 'square', 0.12],    /* C5  */
+      [659, 3020, 0.18, 'square', 0.12],    /* E5  */
+      [784, 3200, 0.50, 'square', 0.13],    /* G5 (finale) */
+    ];
+    /* bass harmony */
+    const bass = [
+      [131, 0,    0.35, 'triangle', 0.06],  /* C3  */
+      [165, 540,  0.35, 'triangle', 0.06],  /* E3  */
+      [196, 1220, 0.35, 'triangle', 0.06],  /* G3  */
+      [175, 1920, 0.35, 'triangle', 0.06],  /* F3  */
+      [131, 2500, 0.35, 'triangle', 0.06],  /* C3  */
+      [196, 3200, 0.50, 'triangle', 0.07],  /* G3 (finale) */
+    ];
+    for (const [f, d, dur, type, vol] of [...melody, ...bass]) {
+      setTimeout(() => osc(type, f, dur, vol), d);
+    }
   },
 };

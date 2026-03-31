@@ -4,6 +4,7 @@ import {
   S_TITLE, S_ACTION_MENU, S_WIN, S_LOSE, S_ATK_SELECT, S_COMBAT_ANIM,
 } from './constants.js';
 import { forecast, canCounter, inRange } from './combat.js';
+import { isMuted } from './audio.js';
 
 const FONT = '"Press Start 2P", monospace';
 
@@ -15,17 +16,19 @@ export class Renderer {
     canvas.height = CANVAS_H;
     this.t = 0;
     this._btn = null;          /* end-turn button bounds */
+    this._sndBtn = null;       /* sound toggle button bounds */
   }
 
   tick() { this.t++; }
   get endTurnBtn() { return this._btn; }
+  get soundBtn()   { return this._sndBtn; }
 
   /* ═══════════ MAIN DRAW ═══════════ */
   draw(g) {
     const c = this.cx;
     c.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
-    if (g.state === S_TITLE) { this._title(); return; }
+    if (g.state === S_TITLE) { this._title(); this._soundToggle(CANVAS_W - SIDEBAR_W, CANVAS_H - 40, SIDEBAR_W); return; }
 
     this._map(g.map);
     this._highlights(g);
@@ -53,27 +56,194 @@ export class Renderer {
     }
 
     const mx = CANVAS_W / 2, my = CANVAS_H / 2;
-    c.textAlign = 'center';
 
+    /* ── 8-bit battle scene ── */
+    this._titleBattle(c, mx, my);
+
+    /* title text */
+    c.textAlign = 'center';
     c.fillStyle = C.GOLD;
     c.font = `24px ${FONT}`;
-    c.fillText('EMBLEM TACTICS', mx, my - 70);
+    c.fillText('EMBLEM TACTICS', mx, my - 100);
 
     c.fillStyle = '#5050cc';
     c.font = `10px ${FONT}`;
-    c.fillText('ROGUELIKE TACTICS RPG', mx, my - 40);
+    c.fillText('ROGUELIKE TACTICS RPG', mx, my - 72);
 
     if (Math.floor(this.t / 30) % 2 === 0) {
       c.fillStyle = C.TXT;
       c.font = `10px ${FONT}`;
-      c.fillText('CLICK TO START', mx, my + 20);
+      c.fillText('CLICK TO START', mx, my + 100);
     }
 
     c.fillStyle = '#606060';
     c.font = `7px ${FONT}`;
-    c.fillText('Select unit \u2192 click destination \u2192 Attack / Wait', mx, my + 70);
-    c.fillText('Defeat all enemies to advance.  Lord dies = Game Over.', mx, my + 90);
-    c.fillText('Weapon triangle: Sword > Axe > Lance > Sword', mx, my + 110);
+    c.fillText('Select unit \u2192 click destination \u2192 Attack / Wait', mx, my + 130);
+    c.fillText('Defeat all enemies to advance.  Lord dies = Game Over.', mx, my + 148);
+    c.fillText('Weapon triangle: Sword > Axe > Lance > Sword', mx, my + 166);
+  }
+
+  /* ── Pixel art battle scene for title screen ── */
+  _titleBattle(c, mx, my) {
+    const t = this.t;
+    const P = 4; /* pixel scale */
+    const px = (x, y, w, h) => c.fillRect(x, y, w * P, h * P);
+
+    /* ground / terrain */
+    c.fillStyle = '#2d5a27';
+    c.fillRect(mx - 160, my + 40, 320, 60);
+    c.fillStyle = '#5a8a20';
+    c.fillRect(mx - 160, my + 30, 320, 14);
+
+    /* grass tufts */
+    c.fillStyle = '#3a6a18';
+    for (const gx of [-140, -80, -20, 50, 100]) {
+      px(mx + gx, my + 32, 3, 1);
+      px(mx + gx + 4, my + 30, 2, 1);
+    }
+
+    /* clash spark animation */
+    const spark = Math.sin(t * 0.2) > 0;
+    if (spark) {
+      c.fillStyle = '#ffff80';
+      const sx = mx, sy = my - 14;
+      px(sx - 2, sy - 8, 1, 1); px(sx + 6, sy - 10, 1, 1);
+      px(sx - 6, sy - 4, 1, 1); px(sx + 10, sy - 2, 1, 1);
+      px(sx, sy - 14, 1, 1);    px(sx + 4, sy + 2, 1, 1);
+      c.fillStyle = '#ffffff';
+      px(sx, sy - 6, 2, 2);
+      px(sx + 2, sy - 4, 1, 3);
+      px(sx - 2, sy - 2, 1, 2);
+    }
+
+    /* ── Blue Lord (left, facing right, sword swinging) ── */
+    const lx = mx - 70, ly = my - 30;
+    const lBob = Math.sin(t * 0.12) * 2;
+
+    /* boots */
+    c.fillStyle = '#4a3020';
+    px(lx + 4, ly + 44 + lBob, 4, 3);
+    px(lx + 14, ly + 42 + lBob, 4, 5);
+
+    /* legs */
+    c.fillStyle = '#1a3080';
+    px(lx + 6, ly + 36 + lBob, 3, 8);
+    px(lx + 14, ly + 34 + lBob, 3, 8);
+
+    /* body */
+    c.fillStyle = '#2860f0';
+    px(lx + 4, ly + 18 + lBob, 8, 16);
+    /* armor highlight */
+    c.fillStyle = '#5090ff';
+    px(lx + 6, ly + 20 + lBob, 2, 4);
+
+    /* cape */
+    c.fillStyle = '#1040a0';
+    px(lx, ly + 20 + lBob, 2, 14);
+    px(lx - 2, ly + 24 + lBob, 2, 12);
+
+    /* head */
+    c.fillStyle = '#f0c890';
+    px(lx + 6, ly + 6 + lBob, 6, 6);
+    px(lx + 4, ly + 8 + lBob, 2, 4);
+
+    /* helmet (gold) */
+    c.fillStyle = '#c0a000';
+    px(lx + 4, ly + 2 + lBob, 8, 5);
+    px(lx + 6, ly + lBob, 4, 2);
+    /* helmet plume */
+    c.fillStyle = '#e02020';
+    px(lx + 2, ly - 2 + lBob, 2, 4);
+    px(lx, ly - 4 + lBob, 2, 4);
+
+    /* eyes */
+    c.fillStyle = '#202020';
+    px(lx + 10, ly + 8 + lBob, 1, 1);
+
+    /* sword arm (extended, swinging) */
+    const sSwing = Math.sin(t * 0.15) * 3;
+    c.fillStyle = '#f0c890';
+    px(lx + 16, ly + 20 + lBob, 3, 3);
+    /* sword */
+    c.fillStyle = '#d0d0e0';
+    px(lx + 20, ly + 10 + lBob + sSwing, 2, 14);
+    px(lx + 18, ly + 8 + lBob + sSwing, 6, 2);
+    /* hilt */
+    c.fillStyle = '#c0a000';
+    px(lx + 18, ly + 22 + lBob, 6, 2);
+    /* blade gleam */
+    c.fillStyle = '#ffffff';
+    px(lx + 22, ly + 12 + lBob + sSwing, 1, 4);
+
+    /* shield arm */
+    c.fillStyle = '#3070d0';
+    px(lx, ly + 22 + lBob, 3, 6);
+    c.fillStyle = '#c0a000';
+    px(lx - 2, ly + 22 + lBob, 2, 5);
+
+    /* ── Red Brigand (right, facing left, axe raised) ── */
+    const rx = mx + 30, ry = my - 36;
+    const rBob = Math.sin(t * 0.12 + 1.5) * 2;
+
+    /* boots */
+    c.fillStyle = '#3a2a1a';
+    px(rx + 6, ry + 52 + rBob, 5, 4);
+    px(rx + 16, ry + 50 + rBob, 5, 6);
+
+    /* legs */
+    c.fillStyle = '#604020';
+    px(rx + 8, ry + 42 + rBob, 4, 10);
+    px(rx + 16, ry + 40 + rBob, 4, 10);
+
+    /* body (bigger — brigand is bulkier) */
+    c.fillStyle = '#904020';
+    px(rx + 4, ry + 22 + rBob, 12, 18);
+    /* belt */
+    c.fillStyle = '#604020';
+    px(rx + 4, ry + 36 + rBob, 12, 2);
+    c.fillStyle = '#c0a000';
+    px(rx + 8, ry + 36 + rBob, 4, 2);
+
+    /* head */
+    c.fillStyle = '#d0a870';
+    px(rx + 6, ry + 10 + rBob, 8, 7);
+    px(rx + 8, ry + 12 + rBob, 8, 5);
+
+    /* bandana */
+    c.fillStyle = '#c02020';
+    px(rx + 4, ry + 8 + rBob, 10, 4);
+    px(rx + 14, ry + 10 + rBob, 4, 2);
+
+    /* eyes (angry) */
+    c.fillStyle = '#202020';
+    px(rx + 6, ry + 14 + rBob, 2, 1);
+
+    /* mouth (snarl) */
+    c.fillStyle = '#202020';
+    px(rx + 6, ry + 16 + rBob, 3, 1);
+
+    /* axe arm (raised to strike) */
+    const aSwing = Math.sin(t * 0.15 + 1) * 4;
+    c.fillStyle = '#d0a870';
+    px(rx, ry + 22 + rBob, 4, 4);
+    /* axe handle */
+    c.fillStyle = '#6a4a2a';
+    px(rx - 6, ry + 4 + rBob + aSwing, 2, 20);
+    /* axe head */
+    c.fillStyle = '#808090';
+    px(rx - 12, ry + 2 + rBob + aSwing, 6, 4);
+    px(rx - 14, ry + 4 + rBob + aSwing, 8, 6);
+    px(rx - 12, ry + 10 + rBob + aSwing, 6, 2);
+    /* axe gleam */
+    c.fillStyle = '#c0c0d0';
+    px(rx - 14, ry + 6 + rBob + aSwing, 2, 2);
+
+    /* other arm */
+    c.fillStyle = '#d0a870';
+    px(rx + 18, ry + 26 + rBob, 3, 3);
+    /* fist */
+    c.fillStyle = '#d0a870';
+    px(rx + 20, ry + 24 + rBob, 3, 4);
   }
 
   /* ═══════════ MAP TILES ═══════════ */
@@ -261,6 +431,9 @@ export class Renderer {
 
     /* end-turn button */
     if (g.phase === 'player') this._endBtn(sx, sh - 50, sw);
+
+    /* sound toggle */
+    this._soundToggle(sx, sh - 90, sw);
   }
 
   _unitAt(g, cur) {
@@ -382,6 +555,40 @@ export class Renderer {
     this._btn = { x: bx, y, w: bw, h: bh };
   }
 
+  _soundToggle(sx, y, sw) {
+    const c = this.cx;
+    const sz = 28, bx = sx + sw - sz - 10, by = y;
+    const m = isMuted();
+
+    c.fillStyle = '#101020'; c.fillRect(bx, by, sz, sz);
+    c.strokeStyle = '#404060'; c.lineWidth = 1; c.strokeRect(bx, by, sz, sz);
+
+    /* speaker icon */
+    c.fillStyle = m ? '#505050' : '#80c0ff';
+    const ix = bx + 6, iy = by + 9;
+    c.fillRect(ix, iy, 4, 10);
+    c.beginPath();
+    c.moveTo(ix + 4, iy); c.lineTo(ix + 10, iy - 4); c.lineTo(ix + 10, iy + 14); c.lineTo(ix + 4, iy + 10);
+    c.closePath(); c.fill();
+
+    if (m) {
+      /* X for muted */
+      c.strokeStyle = '#ff4040'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(bx + 18, by + 8); c.lineTo(bx + 24, by + 20); c.stroke();
+      c.beginPath(); c.moveTo(bx + 24, by + 8); c.lineTo(bx + 18, by + 20); c.stroke();
+    } else {
+      /* sound waves */
+      c.strokeStyle = '#80c0ff'; c.lineWidth = 1.5;
+      for (let i = 1; i <= 2; i++) {
+        c.beginPath();
+        c.arc(ix + 10, iy + 5, 3 + i * 3, -0.6, 0.6);
+        c.stroke();
+      }
+    }
+
+    this._sndBtn = { x: bx, y: by, w: sz, h: sz };
+  }
+
   /* ═══════════ TUTORIAL BANNER ═══════════ */
   _tutBanner(g) {
     if (!g.tut || g.tut.timer <= 0) return;
@@ -417,7 +624,7 @@ export class Renderer {
     c.fillStyle = `rgba(255,200,200,${pulse})`;
     c.font = `8px ${FONT}`;
     c.textAlign = 'center';
-    c.fillText('\u2694 Click a target to attack  \u2022  Right-click / click empty to cancel', mapW / 2, mapH - 12);
+    c.fillText('\u2694 Click a target to attack  \u2022  Click empty tile to cancel', mapW / 2, mapH - 12);
   }
 
   _overlay(g) {

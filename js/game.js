@@ -8,7 +8,7 @@ import { spawnParty, spawnEnemies } from './units.js';
 import { resolve, forecast, canCounter, inRange } from './combat.js';
 import { planEnemyTurn }         from './ai.js';
 import { Renderer }              from './renderer.js';
-import { SFX }                   from './audio.js';
+import { SFX, isMuted, toggleMute } from './audio.js';
 
 /* ═══════════ Tutorial messages ═══════════
    Each fires once, triggered by game events.
@@ -71,6 +71,14 @@ class Game {
     this.cv.addEventListener('contextmenu', e => { e.preventDefault(); this._cancel(); });
     this.cv.addEventListener('mousemove',   e => this._hover(e));
     document.addEventListener('keydown',    e => { if (e.key === 'Escape') this._cancel(); });
+
+    /* mobile touch support */
+    this.cv.addEventListener('touchstart', e => {
+      e.preventDefault();
+      const t = e.touches[0];
+      this._hover(t);
+      this._click(t);
+    }, { passive: false });
     this._loop();
   }
 
@@ -158,15 +166,40 @@ class Game {
     const cx = Math.floor(px / TILE), cy = Math.floor(py / TILE);
     const mapW = COLS * TILE;
 
-    if (this.state === S_TITLE)  { SFX.start(); this._startLevel(); return; }
+    /* sound toggle — always available */
+    const sb = this.ren.soundBtn;
+    if (sb && px >= sb.x && px <= sb.x + sb.w && py >= sb.y && py <= sb.y + sb.h) { toggleMute(); return; }
+
+    if (this.state === S_TITLE)  { SFX.titleMelody(); this._startLevel(); return; }
     if (this.state === S_WIN)    { this.floor++; this._startLevel(); return; }
     if (this.state === S_LOSE)   { this.floor = 1; this.players = []; this._startLevel(); return; }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM) return;
 
-    /* end-turn button */
-    if (px >= mapW && this.phase === 'player') {
-      const b = this.ren.endTurnBtn;
-      if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) { this._endPlayerTurn(); return; }
+    /* sidebar buttons */
+    if (px >= mapW) {
+      /* end-turn button */
+      if (this.phase === 'player') {
+        const b = this.ren.endTurnBtn;
+        if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) { this._endPlayerTurn(); return; }
+      }
+    }
+
+    /* action menu — clicking outside the menu cancels (undo move) */
+    if (this.state === S_ACTION_MENU) {
+      const b = this._menuBounds;
+      if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
+        this._clickMenu(px, py);
+      } else {
+        this._cancel();
+      }
+      return;
+    }
+
+    /* attack select — clicking outside the map cancels back to menu */
+    if (this.state === S_ATK_SELECT) {
+      if (cx < 0 || cx >= COLS || cy < 0 || cy >= ROWS) { this._cancel(); return; }
+      this._clickAtkSelect(cx, cy);
+      return;
     }
 
     if (cx < 0 || cx >= COLS || cy < 0 || cy >= ROWS) return;
@@ -174,8 +207,6 @@ class Game {
     switch (this.state) {
       case S_IDLE:        this._clickIdle(cx, cy);      break;
       case S_UNIT_SEL:    this._clickSelected(cx, cy);   break;
-      case S_ACTION_MENU: this._clickMenu(px, py);       break;
-      case S_ATK_SELECT:  this._clickAtkSelect(cx, cy);  break;
     }
   }
 
