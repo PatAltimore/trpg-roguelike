@@ -72,6 +72,8 @@ export function spawnEnemies(spawns, floor) {
   const count = Math.min(spawns.length, 3 + Math.floor(floor * 1.2));
   return spawns.slice(0, count).map((p, i) => {
     const lv = Math.max(1, floor + Math.floor(Math.random() * 2));
-    return new Unit(ENEMY_CLASSES[i % ENEMY_CLASSES.length], p.x, p.y, false, lv);
+    /* tutorial spawns can specify exact class */
+    const cls = p.cls || ENEMY_CLASSES[i % ENEMY_CLASSES.length];
+    return new Unit(cls, p.x, p.y, false, lv);
   });
 }

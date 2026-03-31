@@ -9,6 +9,23 @@ import { resolve, forecast, canCounter, inRange } from './combat.js';
 import { planEnemyTurn }         from './ai.js';
 import { Renderer }              from './renderer.js';
 
+/* ═══════════ Tutorial messages ═══════════
+   Each fires once, triggered by game events.
+   Teaches through play — prompts appear at the moment
+   the player needs the information, not before. */
+const TUT = {
+  start:     'Click a blue unit to select it.',
+  selected:  'Blue tiles = move range. Click one to move!',
+  moved:     'Choose ATTACK if an enemy is nearby, or WAIT.',
+  atk_mode:  'Hover enemies to see the Combat Forecast!',
+  first_kill:'Sword beats Axe! Axe beats Lance! Lance beats Sword!',
+  terrain:   'Forests: DEF+1 AVO+15. Stand on them for cover!',
+  fort:      'Forts: DEF+2 AVO+20 and heal 10% HP each turn!',
+  end_turn:  'All units done? Click END TURN on the right.',
+  enemy_go:  'Enemy phase! They follow the same combat rules.',
+  ranged:    'Archers: range 2. Mages: range 1-2. Use them wisely!',
+};
+
 class Game {
   constructor() {
     this.cv   = document.getElementById('gameCanvas');
@@ -23,10 +40,10 @@ class Game {
     this.enemies = [];
 
     /* selection state */
-    this.sel       = null;      /* selected unit */
+    this.sel       = null;
     this.moveRange = null;
     this.atkRange  = null;
-    this.preview   = null;      /* combat forecast */
+    this.preview   = null;
     this.cur       = { x: 0, y: 0 };
 
     /* action menu */
@@ -34,7 +51,7 @@ class Game {
     this.menuOpts = [];
     this.menuIdx  = 0;
     this._menuBounds = null;
-    this._prevPos = null;       /* position before move (for undo) */
+    this._prevPos = null;
 
     /* enemy turn queue */
     this._eActions = null;
@@ -46,9 +63,26 @@ class Game {
     this._combatIdx = 0;
     this._combatTimer = 0;
 
+    /* tutorial */
+    this.tut = null;
+
     this.cv.addEventListener('click',     e => this._click(e));
     this.cv.addEventListener('mousemove', e => this._hover(e));
     this._loop();
+  }
+
+  /* ═══════════ TUTORIAL ═══════════ */
+  _tutInit() {
+    this.tut = { shown: new Set(), msg: '', timer: 0 };
+  }
+  _tutShow(key) {
+    if (!this.tut || this.tut.shown.has(key)) return;
+    this.tut.shown.add(key);
+    this.tut.msg = TUT[key] || '';
+    this.tut.timer = 300; // ~5 sec at 60fps
+  }
+  _tutTick() {
+    if (this.tut && this.tut.timer > 0) this.tut.timer--;
   }
 
   /* ═══════════ LOOP ═══════════ */
@@ -60,15 +94,20 @@ class Game {
   }
 
   _update() {
+    this._tutTick();
     if (this.state === S_ENEMY_TURN) this._stepEnemy();
     if (this.state === S_COMBAT_ANIM) this._stepCombatAnim();
+
+    /* tutorial: detect when all player units are done */
+    if (this.tut && this.state === S_IDLE && this.phase === 'player') {
+      if (this.players.every(p => p.done)) this._tutShow('end_turn');
+    }
   }
 
   /* ═══════════ LEVEL SETUP ═══════════ */
   _startLevel() {
     this.map = new GameMap(this.floor);
 
-    /* party persists across floors if alive */
     const alive = this.players.filter(p => p.alive);
     this.players = spawnParty(this.map.playerSpawns, this.floor, alive.length ? alive : null);
     this.enemies = spawnEnemies(this.map.enemySpawns, this.floor);
@@ -78,6 +117,14 @@ class Game {
     this.turn  = 1;
     this._deselect();
     if (this.map.playerSpawns[0]) this.cur = { ...this.map.playerSpawns[0] };
+
+    /* start tutorial on floor 1 */
+    if (this.floor === 1) {
+      this._tutInit();
+      this._tutShow('start');
+    } else {
+      this.tut = null;
+    }
   }
 
   /* ═══════════ INPUT ═══════════ */
@@ -93,6 +140,13 @@ class Game {
     if (cx >= 0 && cx < COLS && cy >= 0 && cy < ROWS) {
       this.cur = { x: cx, y: cy };
       if (this.state === S_ATK_SELECT && this.sel) this._updatePreview(cx, cy);
+
+      /* tutorial: terrain tips when hovering relevant tiles */
+      if (this.tut) {
+        const t = this.map.at(cx, cy);
+        if (t.def > 0 && t.heal)  this._tutShow('fort');
+        else if (t.def > 0)       this._tutShow('terrain');
+      }
     }
   }
 
@@ -101,12 +155,9 @@ class Game {
     const cx = Math.floor(px / TILE), cy = Math.floor(py / TILE);
     const mapW = COLS * TILE;
 
-    /* title */
     if (this.state === S_TITLE)  { this._startLevel(); return; }
-    /* win / lose */
     if (this.state === S_WIN)    { this.floor++; this._startLevel(); return; }
     if (this.state === S_LOSE)   { this.floor = 1; this.players = []; this._startLevel(); return; }
-    /* enemy turn – ignore */
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM) return;
 
     /* end-turn button */
@@ -115,7 +166,6 @@ class Game {
       if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) { this._endPlayerTurn(); return; }
     }
 
-    /* out of map */
     if (cx < 0 || cx >= COLS || cy < 0 || cy >= ROWS) return;
 
     switch (this.state) {
@@ -126,32 +176,29 @@ class Game {
     }
   }
 
-  /* ── idle: pick a player unit ── */
+  /* ── idle ── */
   _clickIdle(cx, cy) {
     const u = this._playerAt(cx, cy);
     if (u && !u.done) this._select(u);
   }
 
-  /* ── unit selected: pick move destination ── */
+  /* ── unit selected ── */
   _clickSelected(cx, cy) {
-    /* re-select different unit */
     const other = this._playerAt(cx, cy);
     if (other && other !== this.sel && !other.done) { this._select(other); return; }
 
-    /* click in move range? */
     if (!this.moveRange || !this.moveRange.some(t => t.x === cx && t.y === cy)) {
       this._deselect(); return;
     }
-    /* can't land on enemy */
     if (this._enemyAt(cx, cy)) return;
 
-    /* move */
     this._prevPos = { x: this.sel.x, y: this.sel.y };
     this.sel.x = cx; this.sel.y = cy; this.sel.moved = true;
     this._showActionMenu();
+    this._tutShow('moved');
   }
 
-  /* ── action menu click ── */
+  /* ── action menu ── */
   _clickMenu(px, py) {
     const b = this._menuBounds;
     if (!b || px < b.x || px > b.x + b.w || py < b.y || py > b.y + b.h) return;
@@ -166,6 +213,7 @@ class Game {
       this.atkRange = this._atkTiles(this.sel);
       this.moveRange = null;
       this.preview = null;
+      this._tutShow('atk_mode');
     } else if (opt.action === 'wait') {
       this.sel.acted = true;
       this._deselect();
@@ -178,11 +226,10 @@ class Game {
     }
   }
 
-  /* ── attack target select ── */
+  /* ── attack target ── */
   _clickAtkSelect(cx, cy) {
     const tgt = this._enemyAt(cx, cy);
     if (!tgt || !inRange(this.sel, cx, cy)) {
-      /* cancel back to action menu */
       this._showActionMenu();
       return;
     }
@@ -202,14 +249,16 @@ class Game {
 
   _stepCombatAnim() {
     this._combatTimer++;
-    if (this._combatTimer < 30) return; /* brief pause per hit */
+    if (this._combatTimer < 30) return;
     this._combatTimer = 0;
     this._combatIdx++;
     if (this._combatIdx >= this._combatLog.length) {
-      /* done */
       if (this.sel) this.sel.acted = true;
+      const hadEnemies = this.enemies.length;
       this.enemies = this.enemies.filter(e => e.alive);
       this.players = this.players.filter(p => p.alive);
+      /* tutorial: first kill tip */
+      if (this.tut && this.enemies.length < hadEnemies) this._tutShow('first_kill');
       this._deselect();
       this._checkEnd();
     }
@@ -224,6 +273,7 @@ class Game {
     this._eActions = null;
     this._eIdx = 0;
     this._eTimer = 0;
+    this._tutShow('enemy_go');
   }
 
   _stepEnemy() {
@@ -240,10 +290,8 @@ class Game {
     const a = this._eActions[this._eIdx++];
     if (!a.unit.alive) return;
 
-    /* move */
     if (a.mx !== undefined) { a.unit.x = a.mx; a.unit.y = a.my; }
 
-    /* attack */
     if ((a.type === 'attack' || a.type === 'move_attack') && a.target && a.target.alive) {
       if (inRange(a.unit, a.target.x, a.target.y)) {
         const at = this.map.at(a.unit.x, a.unit.y);
@@ -262,7 +310,6 @@ class Game {
     this.state = S_IDLE;
     this._eActions = null;
 
-    /* fort healing */
     for (const u of [...this.players, ...this.enemies]) {
       if (!u.alive) continue;
       const t = this.map.at(u.x, u.y);
@@ -278,6 +325,9 @@ class Game {
     this.atkRange = null;
     this.preview = null;
     this.state = S_UNIT_SEL;
+    this._tutShow('selected');
+    /* tutorial: ranged unit tip */
+    if (this.tut && (u.key === 'ARCHER' || u.key === 'MAGE')) this._tutShow('ranged');
   }
 
   _deselect() {
@@ -334,5 +384,5 @@ class Game {
   _enemyAt(x, y)  { return this.enemies.find(u => u.alive && u.x === x && u.y === y); }
 }
 
-/* boot */
-new Game();
+/* boot — expose for debug */
+window._game = new Game();

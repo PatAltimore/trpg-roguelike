@@ -33,6 +33,7 @@ export class Renderer {
     this._cursor(g);
     this._sidebar(g);
     if (g.state === S_ACTION_MENU) this._menu(g);
+    this._tutBanner(g);
     if (g.state === S_WIN || g.state === S_LOSE) this._overlay(g);
   }
 
@@ -211,7 +212,14 @@ export class Renderer {
 
     /* floor / phase / turn */
     c.fillStyle = C.GOLD; c.font = `10px ${FONT}`;
-    c.fillText(`FLOOR ${g.floor}`, px, y); y += 20;
+    const floorLabel = g.floor === 1 ? 'TUTORIAL' : `FLOOR ${g.floor}`;
+    c.fillText(floorLabel, px, y); y += 20;
+    /* floor theme subtitle */
+    if (g.map && g.map._floorTheme) {
+      c.fillStyle = '#707090'; c.font = `6px ${FONT}`;
+      const names = { forest:'Forest Skirmish', fortress:'Fortress Siege', gauntlet:'The Gauntlet', open_field:'Open Field', mixed:'War Zone' };
+      c.fillText(names[g.map._floorTheme] || '', px, y); y += 12;
+    }
     c.fillStyle = g.phase === 'player' ? '#6080ff' : '#ff6060';
     c.font = `9px ${FONT}`;
     c.fillText(g.phase === 'player' ? 'PLAYER PHASE' : 'ENEMY PHASE', px, y); y += 16;
@@ -345,6 +353,27 @@ export class Renderer {
     this._btn = { x: bx, y, w: bw, h: bh };
   }
 
+  /* ═══════════ TUTORIAL BANNER ═══════════ */
+  _tutBanner(g) {
+    if (!g.tut || g.tut.timer <= 0) return;
+    const c = this.cx;
+    const a = Math.min(1, g.tut.timer / 30); // fade out over last 0.5s
+    const mapW = COLS * TILE;
+
+    /* dark banner at top of map */
+    c.fillStyle = `rgba(0,0,40,${0.88 * a})`;
+    c.fillRect(0, 0, mapW, 48);
+    c.strokeStyle = `rgba(100,100,255,${0.7 * a})`;
+    c.lineWidth = 2;
+    c.strokeRect(0, 0, mapW, 48);
+
+    /* gold arrow indicator */
+    c.fillStyle = `rgba(255,215,0,${a})`;
+    c.font = `10px ${FONT}`;
+    c.textAlign = 'center';
+    c.fillText('\u25B6 ' + g.tut.msg, mapW / 2, 30);
+  }
+
   _overlay(g) {
     const c = this.cx;
     c.fillStyle = 'rgba(0,0,0,0.65)'; c.fillRect(0, 0, CANVAS_W, CANVAS_H);
@@ -352,8 +381,10 @@ export class Renderer {
     c.textAlign = 'center';
 
     if (g.state === S_WIN) {
-      c.fillStyle = C.GOLD; c.font = `22px ${FONT}`; c.fillText('VICTORY!', mx, my - 30);
-      c.fillStyle = C.TXT;  c.font = `10px ${FONT}`; c.fillText(`Floor ${g.floor} cleared!`, mx, my + 10);
+      c.fillStyle = C.GOLD; c.font = `22px ${FONT}`;
+      c.fillText(g.floor === 1 ? 'TUTORIAL CLEAR!' : 'VICTORY!', mx, my - 30);
+      c.fillStyle = C.TXT;  c.font = `10px ${FONT}`;
+      c.fillText(g.floor === 1 ? 'You learned the basics!' : `Floor ${g.floor} cleared!`, mx, my + 10);
       c.fillText('Click to continue...', mx, my + 40);
     } else {
       c.fillStyle = '#ff2020'; c.font = `22px ${FONT}`; c.fillText('GAME OVER', mx, my - 30);

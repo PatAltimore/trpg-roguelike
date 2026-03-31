@@ -1,7 +1,18 @@
 {
   "permissions": {
     "allow": [
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "Bash(az --version)",
+      "Bash(gh --version)",
+      "Bash(az account:*)",
+      "Bash(git push:*)",
+      "Bash(az staticwebapp:*)",
+      "Bash(az group:*)",
+      "Bash(git pull:*)",
+      "Bash(gh run:*)",
+      "WebFetch(domain:www.gamedeveloper.com)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:andrewdowell.artstation.com)"
     ]
   }
 }
