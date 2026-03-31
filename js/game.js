@@ -8,6 +8,7 @@ import { spawnParty, spawnEnemies } from './units.js';
 import { resolve, forecast, canCounter, inRange } from './combat.js';
 import { planEnemyTurn }         from './ai.js';
 import { Renderer }              from './renderer.js';
+import { SFX }                   from './audio.js';
 
 /* ═══════════ Tutorial messages ═══════════
    Each fires once, triggered by game events.
@@ -155,7 +156,7 @@ class Game {
     const cx = Math.floor(px / TILE), cy = Math.floor(py / TILE);
     const mapW = COLS * TILE;
 
-    if (this.state === S_TITLE)  { this._startLevel(); return; }
+    if (this.state === S_TITLE)  { SFX.start(); this._startLevel(); return; }
     if (this.state === S_WIN)    { this.floor++; this._startLevel(); return; }
     if (this.state === S_LOSE)   { this.floor = 1; this.players = []; this._startLevel(); return; }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM) return;
@@ -179,13 +180,13 @@ class Game {
   /* ── idle ── */
   _clickIdle(cx, cy) {
     const u = this._playerAt(cx, cy);
-    if (u && !u.done) this._select(u);
+    if (u && !u.done) { SFX.select(); this._select(u); }
   }
 
   /* ── unit selected ── */
   _clickSelected(cx, cy) {
     const other = this._playerAt(cx, cy);
-    if (other && other !== this.sel && !other.done) { this._select(other); return; }
+    if (other && other !== this.sel && !other.done) { SFX.select(); this._select(other); return; }
 
     if (!this.moveRange || !this.moveRange.some(t => t.x === cx && t.y === cy)) {
       this._deselect(); return;
@@ -194,6 +195,7 @@ class Game {
 
     this._prevPos = { x: this.sel.x, y: this.sel.y };
     this.sel.x = cx; this.sel.y = cy; this.sel.moved = true;
+    SFX.move();
     this._showActionMenu();
     this._tutShow('moved');
   }
@@ -203,22 +205,25 @@ class Game {
     const b = this._menuBounds;
     if (!b || px < b.x || px > b.x + b.w || py < b.y || py > b.y + b.h) return;
 
-    const idx = Math.floor((py - b.y - 10) / 28);
+    const idx = Math.floor((py - b.y - 14) / 36);
     if (idx < 0 || idx >= this.menuOpts.length) return;
     const opt = this.menuOpts[idx];
     if (!opt.on) return;
 
     if (opt.action === 'attack') {
+      SFX.menuSelect();
       this.state = S_ATK_SELECT;
       this.atkRange = this._atkTiles(this.sel);
       this.moveRange = null;
       this.preview = null;
       this._tutShow('atk_mode');
     } else if (opt.action === 'wait') {
+      SFX.menuSelect();
       this.sel.acted = true;
       this._deselect();
       this._checkEnd();
     } else if (opt.action === 'back') {
+      SFX.menuBack();
       this.sel.x = this._prevPos.x;
       this.sel.y = this._prevPos.y;
       this.sel.moved = false;
@@ -249,16 +254,28 @@ class Game {
 
   _stepCombatAnim() {
     this._combatTimer++;
+    /* play sound at the start of each strike */
+    if (this._combatTimer === 1 && this._combatIdx < this._combatLog.length) {
+      const entry = this._combatLog[this._combatIdx];
+      if (!entry.hit) SFX.miss();
+      else if (entry.crit) SFX.crit();
+      else SFX.hit();
+    }
     if (this._combatTimer < 30) return;
     this._combatTimer = 0;
     this._combatIdx++;
     if (this._combatIdx >= this._combatLog.length) {
       if (this.sel) this.sel.acted = true;
       const hadEnemies = this.enemies.length;
+      const hadPlayers = this.players.length;
       this.enemies = this.enemies.filter(e => e.alive);
       this.players = this.players.filter(p => p.alive);
+      /* sound for kills */
+      if (this.enemies.length < hadEnemies || this.players.length < hadPlayers) SFX.kill();
       /* tutorial: first kill tip */
       if (this.tut && this.enemies.length < hadEnemies) this._tutShow('first_kill');
+      /* exit combat anim state before _deselect, which won't transition from S_COMBAT_ANIM */
+      this.state = S_IDLE;
       this._deselect();
       this._checkEnd();
     }
@@ -266,6 +283,7 @@ class Game {
 
   /* ═══════════ ENEMY TURN ═══════════ */
   _endPlayerTurn() {
+    SFX.turnEnd();
     this.players.forEach(p => p.reset());
     this._deselect();
     this.phase = 'enemy';
@@ -274,6 +292,7 @@ class Game {
     this._eIdx = 0;
     this._eTimer = 0;
     this._tutShow('enemy_go');
+    setTimeout(() => SFX.enemyPhase(), 300);
   }
 
   _stepEnemy() {
@@ -309,6 +328,7 @@ class Game {
     this.phase = 'player';
     this.state = S_IDLE;
     this._eActions = null;
+    SFX.playerPhase();
 
     for (const u of [...this.players, ...this.enemies]) {
       if (!u.alive) continue;
@@ -348,6 +368,7 @@ class Game {
     this.menuIdx = 0;
     this.state = S_ACTION_MENU;
     this.atkRange = this._atkTiles(u);
+    SFX.menuOpen();
   }
 
   _atkTiles(u) {
@@ -376,8 +397,8 @@ class Game {
 
   _checkEnd() {
     const lord = this.players.find(p => p.key === 'LORD');
-    if (!lord || !lord.alive) { this.state = S_LOSE; return; }
-    if (!this.enemies.some(e => e.alive)) { this.state = S_WIN; return; }
+    if (!lord || !lord.alive) { this.state = S_LOSE; SFX.lose(); return; }
+    if (!this.enemies.some(e => e.alive)) { this.state = S_WIN; SFX.win(); return; }
   }
 
   _playerAt(x, y) { return this.players.find(u => u.alive && u.x === x && u.y === y); }

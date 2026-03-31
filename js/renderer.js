@@ -324,20 +324,29 @@ export class Renderer {
 
   _menu(g) {
     const c = this.cx;
-    const mw = 120, mh = g.menuOpts.length * 28 + 12;
-    let mx = g.menuPos.x * TILE, my = g.menuPos.y * TILE;
-    if (mx + mw > COLS * TILE) mx -= mw;
-    if (my + mh > ROWS * TILE) my -= mh;
+    const itemH = 36, pad = 14;
+    const mw = 150, mh = g.menuOpts.length * itemH + pad * 2;
 
-    c.fillStyle = '#0d0d1a'; c.fillRect(mx, my, mw, mh);
-    c.strokeStyle = '#4040c0'; c.lineWidth = 2; c.strokeRect(mx, my, mw, mh);
+    /* position menu offset from unit so it doesn't cover the tile */
+    let mx = (g.menuPos.x + 1) * TILE + 4;
+    let my = g.menuPos.y * TILE - 10;
+    if (mx + mw > COLS * TILE) mx = (g.menuPos.x - 1) * TILE - mw + TILE - 4;
+    if (my + mh > ROWS * TILE) my = ROWS * TILE - mh;
+    if (my < 0) my = 0;
+
+    /* semi-transparent background */
+    c.fillStyle = 'rgba(8,8,24,0.92)'; c.fillRect(mx, my, mw, mh);
+    c.strokeStyle = '#5050d0'; c.lineWidth = 2; c.strokeRect(mx, my, mw, mh);
 
     g.menuOpts.forEach((opt, i) => {
-      const oy = my + 10 + i * 28;
-      if (i === g.menuIdx) { c.fillStyle = '#303080'; c.fillRect(mx+2, oy-8, mw-4, 24); }
-      c.fillStyle = opt.on ? C.TXT : '#505050';
-      c.font = `9px ${FONT}`; c.textAlign = 'left';
-      c.fillText(opt.label, mx + 10, oy + 6);
+      const oy = my + pad + i * itemH;
+      /* hover highlight for the item under cursor */
+      if (i === g.menuIdx) {
+        c.fillStyle = '#303090'; c.fillRect(mx + 3, oy - 4, mw - 6, itemH - 4);
+      }
+      c.fillStyle = opt.on ? '#ffffff' : '#404050';
+      c.font = `10px ${FONT}`; c.textAlign = 'left';
+      c.fillText(opt.label, mx + 14, oy + 16);
     });
 
     /* store bounds for click detection */
