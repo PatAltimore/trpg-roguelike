@@ -186,11 +186,11 @@ export class GameMap {
 
   _pickTheme() {
     const f = this.floor;
-    if (f === 1) return 'forest';        // learn terrain usage
-    if (f === 2) return 'fortress';      // learn fort healing + defense
-    if (f === 3) return 'gauntlet';      // tight corridors, chokepoints
-    if (f === 4) return 'open_field';    // wide rooms, ranged threats
-    /* floors 5+: cycle with increasing chaos */
+    if (f === 1) return 'forest';        // the wilds
+    if (f === 2) return 'fortress';      // enemy stronghold
+    if (f === 3) return 'gauntlet';      // perilous pass
+    if (f === 4) return 'boss';          // the warlord's throne
+    /* fallback */
     const themes = ['forest', 'fortress', 'gauntlet', 'open_field', 'mixed'];
     return themes[(f - 5) % themes.length];
   }
@@ -251,6 +251,11 @@ export class GameMap {
         case 'open_field':
           /* large open areas with sparse cover — positioning is key */
           if (isLarge) this._placeTrees(room, 1 + Math.floor(Math.random() * 2));
+          break;
+        case 'boss':
+          /* dark fortress: sparse trees, fort in boss room for tension */
+          if (isFar && !fortPlaced) { this._themeFort(room); fortPlaced = true; }
+          else if (Math.random() < 0.4) this._placeTrees(room, 1 + Math.floor(Math.random() * 2));
           break;
         case 'mixed':
         default: {
@@ -333,11 +338,14 @@ export class GameMap {
     })).sort((a, b) => a.dist - b.dist);
 
     const occupied = new Set();
-    const addSpawn = (sx, sy) => {
+    const isBoss = this._floorTheme === 'boss';
+    const addSpawn = (sx, sy, cls) => {
       const k = `${sx},${sy}`;
       if (this.passable(sx, sy) && !occupied.has(k)) {
         occupied.add(k);
-        this.enemySpawns.push({ x: sx, y: sy });
+        const spawn = { x: sx, y: sy };
+        if (cls) spawn.cls = cls;
+        this.enemySpawns.push(spawn);
         return true;
       }
       return false;
@@ -348,9 +356,9 @@ export class GameMap {
       const cx = rm.x + Math.floor(rm.w / 2);
       const cy = rm.y + Math.floor(rm.h / 2);
       const ratio = i / Math.max(1, others.length - 1);
+      const isLast = i === others.length - 1;
 
       /* every room gets at least one enemy */
-      /* try to place on passable tile near center, offset from fort */
       if (!addSpawn(cx, cy)) {
         addSpawn(cx + 1, cy) || addSpawn(cx - 1, cy) || addSpawn(cx, cy + 1);
       }
@@ -361,9 +369,13 @@ export class GameMap {
         addSpawn(cx + dir, cy) || addSpawn(cx, cy + 1);
       }
 
-      /* last room: boss encounter — 3 enemies clustered */
-      if (i === others.length - 1 && rm.h >= 3) {
+      /* last room: boss encounter */
+      if (isLast && rm.h >= 3) {
         addSpawn(cx, cy + 1) || addSpawn(cx, cy - 1);
+      }
+      /* boss floor: place WARLORD in the farthest room */
+      if (isBoss && isLast) {
+        addSpawn(cx + 1, cy + 1, 'WARLORD') || addSpawn(cx - 1, cy, 'WARLORD') || addSpawn(cx, cy - 1, 'WARLORD');
       }
     }
   }

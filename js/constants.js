@@ -21,6 +21,7 @@ export const W_LANCE   = { name: 'Lance',   mt: 6, hit: 80, rng: [1,1], magic: f
 export const W_BOW     = { name: 'Bow',     mt: 6, hit: 85, rng: [2,2], magic: false, tri: null    };
 export const W_FIRE    = { name: 'Fire',    mt: 5, hit: 80, rng: [1,2], magic: true,  tri: null    };
 export const W_THUNDER = { name: 'Thunder', mt: 8, hit: 65, rng: [1,2], magic: true,  tri: null    };
+export const W_DARK    = { name: 'Dark',    mt:10, hit: 75, rng: [1,2], magic: true,  tri: null    };
 
 /* Weapon triangle: sword > axe > lance > sword */
 export const TRI = { sword: { strong: 'axe', weak: 'lance' },
@@ -41,6 +42,10 @@ export const S_WIN          = 7;
 export const S_LOSE         = 8;
 export const S_TRANS_OUT    = 9;   // units marching off-screen
 export const S_TRANS_IN     = 10;  // units marching on-screen
+export const S_VICTORY      = 11;  // final victory screen
+
+/* ── Journey structure ── */
+export const FINAL_FLOOR    = 4;   // boss level — last floor of the journey
 
 /* ── Palette ── */
 export const C = {

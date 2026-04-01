@@ -1,4 +1,4 @@
-import { W_SWORD, W_AXE, W_LANCE, W_BOW, W_FIRE, W_THUNDER } from './constants.js';
+import { W_SWORD, W_AXE, W_LANCE, W_BOW, W_FIRE, W_THUNDER, W_DARK } from './constants.js';
 
 /* ── Class templates ── */
 const CLASSES = {
@@ -12,6 +12,8 @@ const CLASSES = {
   BRIGAND:  { name:'Brigand',  lbl:'B', hue:'#904020', w: W_AXE,     base:{hp:28,str:9,mag:0,skl:4,spd:4,lck:2,def:4,res:1,mov:5}, gr:{hp:70,str:55,mag:0,skl:25,spd:25,lck:10,def:20,res:5}  },
   DARK_MAGE:{ name:'D.Mage',  lbl:'D', hue:'#6010a0', w: W_THUNDER, base:{hp:18,str:0,mag:9,skl:5,spd:6,lck:3,def:3,res:6,mov:5}, gr:{hp:40,str:0,mag:60,skl:35,spd:35,lck:15,def:10,res:40} },
   E_ARCHER: { name:'Archer',  lbl:'A', hue:'#a04020', w: W_BOW,     base:{hp:20,str:6,mag:0,skl:7,spd:6,lck:4,def:4,res:2,mov:5}, gr:{hp:50,str:35,mag:0,skl:50,spd:35,lck:20,def:15,res:8}  },
+  /* boss */
+  WARLORD:  { name:'Warlord', lbl:'W', hue:'#ff1010', w: W_DARK,    base:{hp:45,str:4,mag:14,skl:8,spd:6,lck:5,def:8,res:10,mov:4}, gr:{hp:50,str:10,mag:50,skl:30,spd:20,lck:20,def:30,res:40} },
 };
 
 let _id = 0;

@@ -2,7 +2,7 @@ import {
   TILE, COLS, ROWS, SIDEBAR_W, CANVAS_W, CANVAS_H, C,
   T_PLAIN, T_FOREST, T_MOUNTAIN, T_WATER, T_WALL, T_ROAD, T_FORT,
   S_TITLE, S_ACTION_MENU, S_WIN, S_LOSE, S_ATK_SELECT, S_COMBAT_ANIM,
-  S_TRANS_OUT, S_TRANS_IN,
+  S_TRANS_OUT, S_TRANS_IN, S_VICTORY, FINAL_FLOOR,
 } from './constants.js';
 import { forecast, canCounter, inRange } from './combat.js';
 import { isMuted } from './audio.js';
@@ -29,7 +29,8 @@ export class Renderer {
     const c = this.cx;
     c.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
-    if (g.state === S_TITLE) { this._title(); this._soundToggle(CANVAS_W - SIDEBAR_W, CANVAS_H - 40, SIDEBAR_W); return; }
+    if (g.state === S_TITLE)   { this._title(); this._soundToggle(CANVAS_W - SIDEBAR_W, CANVAS_H - 40, SIDEBAR_W); return; }
+    if (g.state === S_VICTORY) { this._victoryScreen(g); return; }
 
     this._map(g.map);
 
@@ -398,7 +399,8 @@ export class Renderer {
 
   _helm(k) {
     return { LORD:'#c0a000', FIGHTER:'#808080', MAGE:'#a000c0', ARCHER:'#206040',
-             SOLDIER:'#804040', BRIGAND:'#604020', DARK_MAGE:'#300060', E_ARCHER:'#604040' }[k] || '#888';
+             SOLDIER:'#804040', BRIGAND:'#604020', DARK_MAGE:'#300060', E_ARCHER:'#604040',
+             WARLORD:'#ff0000' }[k] || '#888';
   }
 
   _dim(hex) {
@@ -426,12 +428,14 @@ export class Renderer {
 
     /* floor / phase / turn */
     c.fillStyle = C.GOLD; c.font = `10px ${FONT}`;
-    const floorLabel = g.floor === 0 ? 'TUTORIAL' : `FLOOR ${g.floor}`;
+    const floorLabel = g.floor === 0 ? 'TUTORIAL'
+                     : g.floor >= FINAL_FLOOR ? 'FINAL BATTLE'
+                     : `FLOOR ${g.floor}`;
     c.fillText(floorLabel, px, y); y += 20;
     /* floor theme subtitle */
     if (g.map && g.map._floorTheme) {
       c.fillStyle = '#707090'; c.font = `6px ${FONT}`;
-      const names = { forest:'Forest Skirmish', fortress:'Fortress Siege', gauntlet:'The Gauntlet', open_field:'Open Field', mixed:'War Zone' };
+      const names = { forest:'The Wilds', fortress:'Enemy Stronghold', gauntlet:'Perilous Pass', open_field:'Open Field', mixed:'War Zone', boss:"Warlord's Throne" };
       c.fillText(names[g.map._floorTheme] || '', px, y); y += 12;
     }
     c.fillStyle = g.phase === 'player' ? '#6080ff' : '#ff6060';
@@ -710,14 +714,135 @@ export class Renderer {
 
     if (g.state === S_WIN) {
       c.fillStyle = C.GOLD; c.font = `22px ${FONT}`;
-      c.fillText(g.floor === 0 ? 'TUTORIAL CLEAR!' : 'VICTORY!', mx, my - 30);
+      const title = g.floor === 0 ? 'TUTORIAL CLEAR!'
+                  : g.floor >= FINAL_FLOOR ? 'WARLORD DEFEATED!'
+                  : 'VICTORY!';
+      c.fillText(title, mx, my - 30);
       c.fillStyle = C.TXT;  c.font = `10px ${FONT}`;
-      c.fillText(g.floor === 0 ? 'You learned the basics!' : `Floor ${g.floor} cleared!`, mx, my + 10);
+      const sub = g.floor === 0 ? 'You learned the basics!'
+                : g.floor >= FINAL_FLOOR ? 'The darkness has been vanquished!'
+                : `Floor ${g.floor} cleared!`;
+      c.fillText(sub, mx, my + 10);
       c.fillText('Click to continue...', mx, my + 40);
     } else {
       c.fillStyle = '#ff2020'; c.font = `22px ${FONT}`; c.fillText('GAME OVER', mx, my - 30);
       c.fillStyle = C.TXT;    c.font = `10px ${FONT}`; c.fillText('Your Lord has fallen!', mx, my + 10);
       c.fillText('Click to restart...', mx, my + 40);
+    }
+  }
+
+  /* ═══════════ VICTORY SCREEN ═══════════ */
+  _victoryScreen(g) {
+    const c = this.cx;
+    const t = this.t;
+
+    /* dark sky with animated stars */
+    c.fillStyle = '#060618';
+    c.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    /* twinkling stars */
+    for (let i = 0; i < 80; i++) {
+      const sx = (i * 137 + 50) % CANVAS_W;
+      const sy = (i * 97  + 30) % CANVAS_H;
+      const twinkle = 0.3 + Math.sin(t * 0.05 + i * 2) * 0.7;
+      c.fillStyle = `rgba(255,255,255,${Math.max(0, twinkle)})`;
+      c.fillRect(sx, sy, 1 + (i % 2), 1 + (i % 2));
+    }
+
+    /* golden sunrise glow at the bottom */
+    const grd = c.createLinearGradient(0, CANVAS_H - 120, 0, CANVAS_H);
+    grd.addColorStop(0, 'rgba(255,180,40,0)');
+    grd.addColorStop(1, 'rgba(255,140,20,0.3)');
+    c.fillStyle = grd;
+    c.fillRect(0, CANVAS_H - 120, CANVAS_W, 120);
+
+    /* ground */
+    c.fillStyle = '#2a4a12';
+    c.fillRect(0, CANVAS_H - 60, CANVAS_W, 60);
+    c.fillStyle = '#3a5a18';
+    c.fillRect(0, CANVAS_H - 60, CANVAS_W, 4);
+
+    const mx = CANVAS_W / 2;
+
+    /* draw all 4 player characters standing on the ground, celebrating */
+    const chars = [
+      { key: 'LORD',    hue: '#2860f0', helm: '#ffd700', lbl: 'L', off: -90 },
+      { key: 'FIGHTER', hue: '#e06020', helm: '#a04010', lbl: 'F', off: -30 },
+      { key: 'MAGE',    hue: '#a020e0', helm: '#6010a0', lbl: 'M', off:  30 },
+      { key: 'ARCHER',  hue: '#20a040', helm: '#106020', lbl: 'A', off:  90 },
+    ];
+
+    for (const ch of chars) {
+      const cx = mx + ch.off;
+      /* bobbing animation — each character bobs at different phase */
+      const bob = Math.sin(t * 0.08 + ch.off * 0.05) * 4;
+      const by = CANVAS_H - 100 + bob;
+
+      /* body */
+      c.fillStyle = ch.hue;
+      c.fillRect(cx - 12, by + 14, 24, 16);
+
+      /* head */
+      c.fillStyle = '#f0c890';
+      c.fillRect(cx - 8, by + 4, 16, 14);
+
+      /* eyes — happy squint */
+      c.fillStyle = '#202020';
+      c.fillRect(cx - 6, by + 10, 3, 2);
+      c.fillRect(cx + 3, by + 10, 3, 2);
+
+      /* helmet */
+      c.fillStyle = ch.helm;
+      c.fillRect(cx - 10, by + 2, 20, 6);
+
+      /* arms raised in celebration */
+      const armWave = Math.sin(t * 0.12 + ch.off * 0.08) * 4;
+      c.fillStyle = ch.hue;
+      c.fillRect(cx - 18, by + 8 - armWave, 6, 14);
+      c.fillRect(cx + 12, by + 8 + armWave, 6, 14);
+
+      /* border */
+      c.strokeStyle = '#80a0ff';
+      c.lineWidth = 2;
+      c.strokeRect(cx - 14, by + 2, 28, 30);
+    }
+
+    /* floating sparkle particles */
+    for (let i = 0; i < 20; i++) {
+      const px = (i * 53 + t * 0.5) % CANVAS_W;
+      const py = CANVAS_H - 80 - ((i * 41 + t * 0.3) % 200);
+      const a = 0.3 + Math.sin(t * 0.1 + i) * 0.3;
+      c.fillStyle = `rgba(255,215,0,${Math.max(0, a)})`;
+      c.fillRect(px, py, 2, 2);
+    }
+
+    /* title text */
+    c.textAlign = 'center';
+
+    /* main title with glow */
+    const glow = 0.5 + Math.sin(t * 0.04) * 0.3;
+    c.shadowColor = `rgba(255,215,0,${glow})`;
+    c.shadowBlur = 20;
+    c.fillStyle = C.GOLD;
+    c.font = `22px ${FONT}`;
+    c.fillText('JOURNEY COMPLETE!', mx, 80);
+    c.shadowBlur = 0;
+
+    c.fillStyle = C.TXT;
+    c.font = `10px ${FONT}`;
+    c.fillText('The Warlord is vanquished.', mx, 120);
+    c.fillText('Peace returns to the realm.', mx, 145);
+
+    /* stats */
+    c.fillStyle = '#8080c0';
+    c.font = `8px ${FONT}`;
+    c.fillText(`Floors conquered: ${FINAL_FLOOR}`, mx, 190);
+
+    /* prompt */
+    if (Math.floor(t / 40) % 2 === 0) {
+      c.fillStyle = '#a0a0a0';
+      c.font = `8px ${FONT}`;
+      c.fillText('Click to return to title...', mx, CANVAS_H - 16);
     }
   }
 }

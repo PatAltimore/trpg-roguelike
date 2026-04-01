@@ -2,7 +2,7 @@ import {
   TILE, COLS, ROWS, CANVAS_W, CANVAS_H,
   S_TITLE, S_IDLE, S_UNIT_SEL, S_ACTION_MENU, S_ATK_SELECT,
   S_COMBAT_ANIM, S_ENEMY_TURN, S_WIN, S_LOSE,
-  S_TRANS_OUT, S_TRANS_IN,
+  S_TRANS_OUT, S_TRANS_IN, S_VICTORY, FINAL_FLOOR,
 } from './constants.js';
 import { GameMap, reachable }    from './map.js';
 import { spawnParty, spawnEnemies } from './units.js';
@@ -187,8 +187,12 @@ class Game {
       }
       return;
     }
-    if (this.state === S_WIN)    { this._beginTransitionOut(); return; }
-    if (this.state === S_LOSE)   { this.floor = 0; this.players = []; this._startLevel(); return; }
+    if (this.state === S_WIN) {
+      if (this.floor >= FINAL_FLOOR) { this.state = S_VICTORY; SFX.victoryMelody(); return; }
+      this._beginTransitionOut(); return;
+    }
+    if (this.state === S_VICTORY) { this.floor = 0; this.state = S_TITLE; return; }
+    if (this.state === S_LOSE)    { this.floor = 0; this.players = []; this._startLevel(); return; }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
         this.state === S_TRANS_OUT || this.state === S_TRANS_IN) return;
 
@@ -295,7 +299,8 @@ class Game {
   _cancel() {
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
         this.state === S_WIN || this.state === S_LOSE || this.state === S_TITLE ||
-        this.state === S_TRANS_OUT || this.state === S_TRANS_IN) return;
+        this.state === S_TRANS_OUT || this.state === S_TRANS_IN ||
+        this.state === S_VICTORY) return;
 
     SFX.menuBack();
     if (this.state === S_ATK_SELECT) {

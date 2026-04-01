@@ -265,4 +265,50 @@ export const SFX = {
       setTimeout(() => osc(type, f, dur, vol), d);
     }
   },
+
+  /* ~6 second victory fanfare — triumphant, celebratory, resolving */
+  victoryMelody() {
+    /* heroic ascending fanfare */
+    const melody = [
+      [523, 0,    0.25, 'square', 0.12],    /* C5 — bold start       */
+      [659, 280,  0.25, 'square', 0.12],    /* E5                    */
+      [784, 560,  0.40, 'square', 0.13],    /* G5 — hold             */
+      [1047,1050, 0.25, 'square', 0.13],    /* C6 — triumphant leap  */
+      [988, 1350, 0.20, 'square', 0.12],    /* B5                    */
+      [1047,1580, 0.20, 'square', 0.12],    /* C6                    */
+      [1175,1800, 0.50, 'square', 0.14],    /* D6 — soaring peak     */
+      [1047,2400, 0.20, 'square', 0.12],    /* C6 — gentle descent   */
+      [988, 2650, 0.20, 'square', 0.12],    /* B5                    */
+      [880, 2900, 0.20, 'square', 0.12],    /* A5                    */
+      [784, 3150, 0.50, 'square', 0.13],    /* G5 — rest             */
+      /* peaceful resolution */
+      [659, 3750, 0.20, 'square', 0.11],    /* E5                    */
+      [784, 4000, 0.25, 'square', 0.12],    /* G5                    */
+      [880, 4280, 0.20, 'square', 0.12],    /* A5                    */
+      [1047,4520, 0.70, 'square', 0.13],    /* C6 — final resolve    */
+    ];
+    /* harmony — warm major thirds */
+    const harmony = [
+      [392, 0,    0.25, 'triangle', 0.06],  /* G4                    */
+      [523, 560,  0.40, 'triangle', 0.06],  /* C5                    */
+      [659, 1050, 0.25, 'triangle', 0.06],  /* E5                    */
+      [784, 1800, 0.50, 'triangle', 0.07],  /* G5                    */
+      [659, 2900, 0.20, 'triangle', 0.06],  /* E5                    */
+      [523, 3150, 0.50, 'triangle', 0.06],  /* C5                    */
+      [523, 4000, 0.25, 'triangle', 0.06],  /* C5                    */
+      [659, 4520, 0.70, 'triangle', 0.07],  /* E5 — warm close       */
+    ];
+    /* bass: solid major foundation */
+    const bass = [
+      [131, 0,    0.50, 'triangle', 0.07],  /* C3                    */
+      [165, 1050, 0.50, 'triangle', 0.07],  /* E3                    */
+      [196, 1800, 0.50, 'triangle', 0.07],  /* G3                    */
+      [131, 2900, 0.50, 'triangle', 0.07],  /* C3                    */
+      [131, 4000, 0.40, 'triangle', 0.06],  /* C3                    */
+      [131, 4520, 0.80, 'triangle', 0.08],  /* C3 — final            */
+    ];
+    for (const [f, d, dur, type, vol] of [...melody, ...harmony, ...bass]) {
+      setTimeout(() => osc(type, f, dur, vol), d);
+    }
+  },
 };
