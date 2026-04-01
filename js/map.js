@@ -27,7 +27,7 @@ export class GameMap {
     this.rooms = [];
     this.playerSpawns = [];
     this.enemySpawns  = [];
-    if (floor === 1) this._generateTutorial();
+    if (floor === 0) this._generateTutorial();
     else             this._generate();
   }
 
@@ -186,13 +186,13 @@ export class GameMap {
 
   _pickTheme() {
     const f = this.floor;
-    if (f === 2) return 'forest';        // learn terrain usage
-    if (f === 3) return 'fortress';      // learn fort healing + defense
-    if (f === 4) return 'gauntlet';      // tight corridors, chokepoints
-    if (f === 5) return 'open_field';    // wide rooms, ranged threats
-    /* floors 6+: cycle with increasing chaos */
+    if (f === 1) return 'forest';        // learn terrain usage
+    if (f === 2) return 'fortress';      // learn fort healing + defense
+    if (f === 3) return 'gauntlet';      // tight corridors, chokepoints
+    if (f === 4) return 'open_field';    // wide rooms, ranged threats
+    /* floors 5+: cycle with increasing chaos */
     const themes = ['forest', 'fortress', 'gauntlet', 'open_field', 'mixed'];
-    return themes[(f - 6) % themes.length];
+    return themes[(f - 5) % themes.length];
   }
 
   /* ── Room dressing ──

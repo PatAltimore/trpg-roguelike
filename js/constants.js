@@ -39,6 +39,8 @@ export const S_COMBAT_ANIM  = 5;
 export const S_ENEMY_TURN   = 6;
 export const S_WIN          = 7;
 export const S_LOSE         = 8;
+export const S_TRANS_OUT    = 9;   // units marching off-screen
+export const S_TRANS_IN     = 10;  // units marching on-screen
 
 /* ── Palette ── */
 export const C = {

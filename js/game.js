@@ -2,6 +2,7 @@ import {
   TILE, COLS, ROWS, CANVAS_W, CANVAS_H,
   S_TITLE, S_IDLE, S_UNIT_SEL, S_ACTION_MENU, S_ATK_SELECT,
   S_COMBAT_ANIM, S_ENEMY_TURN, S_WIN, S_LOSE,
+  S_TRANS_OUT, S_TRANS_IN,
 } from './constants.js';
 import { GameMap, reachable }    from './map.js';
 import { spawnParty, spawnEnemies } from './units.js';
@@ -33,7 +34,7 @@ class Game {
     this.ren  = new Renderer(this.cv);
     this.state = S_TITLE;
     this.phase = 'player';
-    this.floor = 1;
+    this.floor = 0;
     this.turn  = 1;
 
     this.map     = null;
@@ -66,6 +67,9 @@ class Game {
 
     /* tutorial */
     this.tut = null;
+
+    /* level transition animation */
+    this.trans = null;   // { walkers, path, step, total, dir }
 
     this.cv.addEventListener('click',       e => this._click(e));
     this.cv.addEventListener('contextmenu', e => { e.preventDefault(); this._cancel(); });
@@ -106,6 +110,7 @@ class Game {
 
   _update() {
     this._tutTick();
+    if (this.state === S_TRANS_OUT || this.state === S_TRANS_IN) { this._stepTransition(); return; }
     if (this.state === S_ENEMY_TURN) this._stepEnemy();
     if (this.state === S_COMBAT_ANIM) this._stepCombatAnim();
 
@@ -130,7 +135,7 @@ class Game {
     if (this.map.playerSpawns[0]) this.cur = { ...this.map.playerSpawns[0] };
 
     /* start tutorial on floor 1 */
-    if (this.floor === 1) {
+    if (this.floor === 0) {
       this._tutInit();
       this._tutShow('start');
     } else {
@@ -175,17 +180,18 @@ class Game {
       if (btns) {
         const hit = (b) => b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
         if (hit(btns.tutorial)) {
-          SFX.titleMelody(); this.floor = 1; this._startLevel(); return;
+          SFX.titleMelody(); this.floor = 0; this._startLevel(); return;
         }
         if (hit(btns.start)) {
-          SFX.titleMelody(); this.floor = 2; this._startLevel(); return;
+          SFX.titleMelody(); this.floor = 1; this._startLevel(); return;
         }
       }
       return;
     }
-    if (this.state === S_WIN)    { this.floor++; this._startLevel(); return; }
-    if (this.state === S_LOSE)   { this.floor = 1; this.players = []; this._startLevel(); return; }
-    if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM) return;
+    if (this.state === S_WIN)    { this._beginTransitionOut(); return; }
+    if (this.state === S_LOSE)   { this.floor = 0; this.players = []; this._startLevel(); return; }
+    if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
+        this.state === S_TRANS_OUT || this.state === S_TRANS_IN) return;
 
     /* sidebar buttons */
     if (px >= mapW) {
@@ -289,7 +295,8 @@ class Game {
   /* ── cancel (right-click / Escape) ── */
   _cancel() {
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
-        this.state === S_WIN || this.state === S_LOSE || this.state === S_TITLE) return;
+        this.state === S_WIN || this.state === S_LOSE || this.state === S_TITLE ||
+        this.state === S_TRANS_OUT || this.state === S_TRANS_IN) return;
 
     SFX.menuBack();
     if (this.state === S_ATK_SELECT) {
@@ -408,6 +415,103 @@ class Game {
     this.enemies.forEach(e => e.reset());
   }
 
+  /* ═══════════ LEVEL TRANSITION ═══════════ */
+
+  _beginTransitionOut() {
+    const alive = this.players.filter(p => p.alive);
+    if (!alive.length) { this.floor++; this._startLevel(); return; }
+
+    /* Sort so rightmost units lead the march */
+    alive.sort((a, b) => b.x - a.x);
+
+    /* Pick a rally row — use the average y of alive units */
+    const rallyY = Math.round(alive.reduce((s, u) => s + u.y, 0) / alive.length);
+
+    /* Each walker has its own path: walk to rally row, then march right off-screen */
+    const walkers = alive.map((u, i) => {
+      const path = [];
+      /* Phase 1: walk vertically to the rally row */
+      let y = u.y;
+      while (y !== rallyY) { path.push({ x: u.x, y }); y += y < rallyY ? 1 : -1; }
+      /* Phase 2: march right off the screen */
+      for (let x = u.x; x <= COLS + 2; x++) path.push({ x, y: rallyY });
+      return { unit: u, path, pathIdx: 0, delay: i * 12 };
+    });
+
+    this.trans = { walkers, step: 0, speed: 8, dir: 'out' };
+    this.state = S_TRANS_OUT;
+    this._deselect();
+    SFX.transitionMelody();
+  }
+
+  _beginTransitionIn() {
+    const alive = this.players.filter(p => p.alive);
+    const spawns = this.map.playerSpawns;
+    if (!alive.length) { this.state = S_IDLE; return; }
+
+    /* Each walker has its own path: enter from the left, walk to their spawn */
+    const walkers = alive.map((u, i) => {
+      const sp = spawns[i % spawns.length];
+      const path = [];
+      const startX = -3 - i;  /* stagger off-screen start */
+      const entryY = sp.y;
+      /* Phase 1: march right to the spawn column */
+      for (let x = startX; x <= sp.x; x++) path.push({ x, y: entryY });
+      /* Phase 2: walk vertically to exact spawn if needed */
+      if (entryY !== sp.y) {
+        let y = entryY;
+        while (y !== sp.y) { y += y < sp.y ? 1 : -1; path.push({ x: sp.x, y }); }
+      }
+      /* Place unit at off-screen start */
+      u.x = startX; u.y = entryY;
+      return { unit: u, path, pathIdx: 0, delay: i * 12 };
+    });
+
+    this.trans = { walkers, step: 0, speed: 8, dir: 'in' };
+    this.state = S_TRANS_IN;
+  }
+
+  _stepTransition() {
+    const tr = this.trans;
+    if (!tr) return;
+    tr.step++;
+
+    let allDone = true;
+    for (const w of tr.walkers) {
+      const eff = tr.step - w.delay;
+      if (eff <= 0) { allDone = false; continue; }
+
+      /* advance one tile every `speed` frames */
+      if (eff % tr.speed === 0 && w.pathIdx < w.path.length - 1) {
+        w.pathIdx++;
+      }
+
+      const pt = w.path[w.pathIdx];
+      w.unit.x = pt.x;
+      w.unit.y = pt.y;
+
+      if (w.pathIdx < w.path.length - 1) allDone = false;
+    }
+
+    if (allDone) {
+      if (tr.dir === 'out') {
+        /* load next level, then animate in */
+        this.floor++;
+        this._startLevel();
+        this._beginTransitionIn();
+      } else {
+        /* snap units to their spawn positions */
+        const spawns = this.map.playerSpawns;
+        this.players.filter(p => p.alive).forEach((u, i) => {
+          const sp = spawns[i % spawns.length];
+          u.x = sp.x; u.y = sp.y;
+        });
+        this.trans = null;
+        this.state = S_IDLE;
+      }
+    }
+  }
+
   /* ═══════════ HELPERS ═══════════ */
   _select(u) {
     this.sel = u;
@@ -422,7 +526,8 @@ class Game {
 
   _deselect() {
     this.sel = null; this.moveRange = null; this.atkRange = null; this.preview = null;
-    if (this.state !== S_WIN && this.state !== S_LOSE && this.state !== S_ENEMY_TURN && this.state !== S_COMBAT_ANIM)
+    if (this.state !== S_WIN && this.state !== S_LOSE && this.state !== S_ENEMY_TURN && this.state !== S_COMBAT_ANIM &&
+        this.state !== S_TRANS_OUT && this.state !== S_TRANS_IN)
       this.state = S_IDLE;
   }
 
@@ -467,7 +572,7 @@ class Game {
 
   _checkEnd() {
     const lord = this.players.find(p => p.key === 'LORD');
-    if (!lord || !lord.alive) { this.state = S_LOSE; SFX.lose(); return; }
+    if (!lord || !lord.alive) { this.state = S_LOSE; SFX.gameOverMelody(); return; }
     if (!this.enemies.some(e => e.alive)) { this.state = S_WIN; SFX.win(); return; }
   }
 

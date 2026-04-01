@@ -65,7 +65,7 @@ export function spawnParty(spawns, floor, existing) {
     return existing;
   }
   return PLAYER_CLASSES.slice(0, Math.min(4, spawns.length))
-    .map((k, i) => new Unit(k, spawns[i].x, spawns[i].y, true, floor));
+    .map((k, i) => new Unit(k, spawns[i].x, spawns[i].y, true, Math.max(1, floor)));
 }
 
 export function spawnEnemies(spawns, floor) {

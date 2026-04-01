@@ -10,9 +10,6 @@
       "Bash(az group:*)",
       "Bash(git pull:*)",
       "Bash(gh run:*)",
-      "WebFetch(domain:www.gamedeveloper.com)",
-      "WebFetch(domain:medium.com)",
-      "WebFetch(domain:andrewdowell.artstation.com)",
       "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/)"
     ]
   }

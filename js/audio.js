@@ -181,4 +181,88 @@ export const SFX = {
       setTimeout(() => osc(type, f, dur, vol), d);
     }
   },
+
+  /* ~5 second transition melody — victory fanfare into marching tension */
+  transitionMelody() {
+    /* Phase 1: triumphant victory phrase (0-2.5s) */
+    const victory = [
+      [523, 0,    0.20, 'square', 0.11],    /* C5 — bold opening    */
+      [659, 200,  0.20, 'square', 0.11],    /* E5                   */
+      [784, 400,  0.35, 'square', 0.12],    /* G5 — hold            */
+      [784, 800,  0.12, 'square', 0.10],    /* G5 — quick repeat    */
+      [880, 960,  0.12, 'square', 0.10],    /* A5                   */
+      [1047,1120, 0.40, 'square', 0.13],    /* C6 — triumphant peak */
+      [988, 1600, 0.15, 'square', 0.10],    /* B5 — graceful turn   */
+      [880, 1800, 0.15, 'square', 0.10],    /* A5                   */
+      [784, 2000, 0.35, 'square', 0.12],    /* G5 — resolves        */
+    ];
+    /* Phase 2: marching tension builds (2.5-5s) */
+    const march = [
+      [330, 2600, 0.14, 'square', 0.09],    /* E4 — drops low       */
+      [349, 2780, 0.14, 'square', 0.09],    /* F4                   */
+      [330, 2960, 0.14, 'square', 0.09],    /* E4 — restless loop   */
+      [294, 3140, 0.20, 'square', 0.10],    /* D4 — descend         */
+      [330, 3400, 0.14, 'square', 0.09],    /* E4                   */
+      [392, 3560, 0.14, 'square', 0.10],    /* G4 — rising hope     */
+      [440, 3720, 0.14, 'square', 0.10],    /* A4                   */
+      [392, 3900, 0.20, 'square', 0.10],    /* G4 — pulls back      */
+      [349, 4100, 0.14, 'square', 0.09],    /* F4                   */
+      [330, 4280, 0.14, 'square', 0.09],    /* E4                   */
+      [294, 4440, 0.25, 'square', 0.10],    /* D4 — suspense        */
+      [262, 4720, 0.40, 'square', 0.11],    /* C4 — unresolved end  */
+    ];
+    /* bass: victory chords then tense pedal tone */
+    const bass = [
+      [131, 0,    0.40, 'triangle', 0.06],  /* C3                   */
+      [165, 400,  0.35, 'triangle', 0.06],  /* E3                   */
+      [131, 1120, 0.45, 'triangle', 0.07],  /* C3                   */
+      [196, 2000, 0.40, 'triangle', 0.06],  /* G3 — resolves        */
+      [165, 2600, 0.30, 'triangle', 0.05],  /* E3 — tension starts  */
+      [147, 3140, 0.30, 'triangle', 0.05],  /* D3                   */
+      [131, 3720, 0.30, 'triangle', 0.05],  /* C3                   */
+      [110, 4280, 0.50, 'triangle', 0.06],  /* A2 — dark rumble     */
+    ];
+    /* percussion: snare-like march rhythm in phase 2 */
+    const drums = [
+      [2600], [2960], [3400], [3720], [4100], [4440], [4720],
+    ];
+    for (const [f, d, dur, type, vol] of [...victory, ...march, ...bass]) {
+      setTimeout(() => osc(type, f, dur, vol), d);
+    }
+    for (const [d] of drums) {
+      setTimeout(() => noise(0.04, 0.06), d);
+    }
+  },
+
+  /* ~5 second game-over melody — melancholy reflection on defeat */
+  gameOverMelody() {
+    /* slow, descending minor phrases with long, sorrowful notes */
+    const melody = [
+      [440, 0,    0.50, 'triangle', 0.11],  /* A4 — mournful open   */
+      [415, 600,  0.50, 'triangle', 0.11],  /* Ab4 — chromatic ache  */
+      [392, 1200, 0.60, 'triangle', 0.10],  /* G4 — settles          */
+      [349, 2000, 0.40, 'triangle', 0.10],  /* F4 — sighing descent  */
+      [330, 2500, 0.55, 'triangle', 0.10],  /* E4 — lingers          */
+      [294, 3200, 0.40, 'triangle', 0.09],  /* D4                    */
+      [262, 3700, 0.50, 'triangle', 0.09],  /* C4 — fading           */
+      [247, 4300, 0.70, 'triangle', 0.08],  /* B3 — dark, unresolved */
+    ];
+    /* counter-melody: sparse, echoing higher notes */
+    const echo = [
+      [659, 300,  0.35, 'square', 0.04],    /* E5 — distant echo    */
+      [587, 1500, 0.35, 'square', 0.04],    /* D5                   */
+      [523, 2700, 0.35, 'square', 0.04],    /* C5                   */
+      [494, 3900, 0.40, 'square', 0.03],    /* B4 — fading whisper  */
+    ];
+    /* bass: low, slow heartbeat-like pulse */
+    const bass = [
+      [110, 0,    0.80, 'sawtooth', 0.05],  /* A2                   */
+      [104, 1200, 0.80, 'sawtooth', 0.05],  /* Ab2                  */
+      [98,  2500, 0.80, 'sawtooth', 0.04],  /* G2                   */
+      [82,  3700, 1.00, 'sawtooth', 0.04],  /* E2 — deep fade       */
+    ];
+    for (const [f, d, dur, type, vol] of [...melody, ...echo, ...bass]) {
+      setTimeout(() => osc(type, f, dur, vol), d);
+    }
+  },
 };

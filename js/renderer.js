@@ -2,6 +2,7 @@ import {
   TILE, COLS, ROWS, SIDEBAR_W, CANVAS_W, CANVAS_H, C,
   T_PLAIN, T_FOREST, T_MOUNTAIN, T_WATER, T_WALL, T_ROAD, T_FORT,
   S_TITLE, S_ACTION_MENU, S_WIN, S_LOSE, S_ATK_SELECT, S_COMBAT_ANIM,
+  S_TRANS_OUT, S_TRANS_IN,
 } from './constants.js';
 import { forecast, canCounter, inRange } from './combat.js';
 import { isMuted } from './audio.js';
@@ -31,8 +32,17 @@ export class Renderer {
     if (g.state === S_TITLE) { this._title(); this._soundToggle(CANVAS_W - SIDEBAR_W, CANVAS_H - 40, SIDEBAR_W); return; }
 
     this._map(g.map);
+
+    /* transition overlays — skip normal highlights/units */
+    if (g.state === S_TRANS_OUT || g.state === S_TRANS_IN) {
+      this._transOverlay(g);
+      this._sidebar(g);
+      return;
+    }
+
     this._highlights(g);
     this._units(g);
+
     this._cursor(g);
     this._sidebar(g);
     if (g.state === S_ACTION_MENU) this._menu(g);
@@ -416,7 +426,7 @@ export class Renderer {
 
     /* floor / phase / turn */
     c.fillStyle = C.GOLD; c.font = `10px ${FONT}`;
-    const floorLabel = g.floor === 1 ? 'TUTORIAL' : `FLOOR ${g.floor}`;
+    const floorLabel = g.floor === 0 ? 'TUTORIAL' : `FLOOR ${g.floor}`;
     c.fillText(floorLabel, px, y); y += 20;
     /* floor theme subtitle */
     if (g.map && g.map._floorTheme) {
@@ -646,6 +656,52 @@ export class Renderer {
     c.fillText('\u2694 Click a target to attack  \u2022  Click empty tile to cancel', mapW / 2, mapH - 12);
   }
 
+  _transOverlay(g) {
+    const c = this.cx;
+    const tr = g.trans;
+    if (!tr) return;
+
+    /* draw road tiles along each walker's path */
+    const drawn = new Set();
+    for (const w of tr.walkers) {
+      for (const pt of w.path) {
+        if (pt.x >= 0 && pt.x < COLS && pt.y >= 0 && pt.y < ROWS) {
+          const key = pt.x + ',' + pt.y;
+          if (drawn.has(key)) continue;
+          drawn.add(key);
+          c.fillStyle = '#c8a870';
+          c.fillRect(pt.x * TILE, pt.y * TILE, TILE, TILE);
+          c.fillStyle = '#b89860';
+          c.fillRect(pt.x * TILE + 16, pt.y * TILE + 2, 8, TILE - 4);
+        }
+      }
+    }
+
+    /* draw walker units (including off-screen partial visibility at edges) */
+    c.save();
+    c.beginPath();
+    c.rect(0, 0, COLS * TILE, CANVAS_H);
+    c.clip();
+    for (const w of tr.walkers) {
+      if (w.unit.alive) this._unit(w.unit, g);
+    }
+    c.restore();
+
+    /* banner text */
+    const mx = (COLS * TILE) / 2;
+    const pulse = 0.7 + Math.sin(this.t * 0.08) * 0.3;
+    c.fillStyle = `rgba(0,0,0,${0.5 * pulse})`;
+    c.fillRect(0, CANVAS_H / 2 - 20, COLS * TILE, 40);
+    c.textAlign = 'center';
+    c.fillStyle = C.GOLD;
+    c.font = `12px ${FONT}`;
+    if (tr.dir === 'out') {
+      c.fillText('MARCHING ONWARD...', mx, CANVAS_H / 2 + 5);
+    } else {
+      c.fillText(g.floor === 0 ? 'TUTORIAL' : `FLOOR ${g.floor}`, mx, CANVAS_H / 2 + 5);
+    }
+  }
+
   _overlay(g) {
     const c = this.cx;
     c.fillStyle = 'rgba(0,0,0,0.65)'; c.fillRect(0, 0, CANVAS_W, CANVAS_H);
@@ -654,9 +710,9 @@ export class Renderer {
 
     if (g.state === S_WIN) {
       c.fillStyle = C.GOLD; c.font = `22px ${FONT}`;
-      c.fillText(g.floor === 1 ? 'TUTORIAL CLEAR!' : 'VICTORY!', mx, my - 30);
+      c.fillText(g.floor === 0 ? 'TUTORIAL CLEAR!' : 'VICTORY!', mx, my - 30);
       c.fillStyle = C.TXT;  c.font = `10px ${FONT}`;
-      c.fillText(g.floor === 1 ? 'You learned the basics!' : `Floor ${g.floor} cleared!`, mx, my + 10);
+      c.fillText(g.floor === 0 ? 'You learned the basics!' : `Floor ${g.floor} cleared!`, mx, my + 10);
       c.fillText('Click to continue...', mx, my + 40);
     } else {
       c.fillStyle = '#ff2020'; c.font = `22px ${FONT}`; c.fillText('GAME OVER', mx, my - 30);
