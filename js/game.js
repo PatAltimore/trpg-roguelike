@@ -124,8 +124,7 @@ class Game {
   _startLevel() {
     this.map = new GameMap(this.floor);
 
-    const alive = this.players.filter(p => p.alive);
-    this.players = spawnParty(this.map.playerSpawns, this.floor, alive.length ? alive : null);
+    this.players = spawnParty(this.map.playerSpawns, this.floor, null);
     this.enemies = spawnEnemies(this.map.enemySpawns, this.floor);
 
     this.state = S_IDLE;
