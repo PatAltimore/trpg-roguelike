@@ -485,10 +485,10 @@ export class Renderer {
     /* combat preview */
     if (g.preview) { this._combatPreview(g.preview, sx, y, sw); y += 128; }
 
-    /* sound toggle + end-turn: place below content so visible when zoomed */
+    /* end-turn + sound toggle: place below content so visible when zoomed */
     const btnY = y + 10;
-    this._soundToggle(sx, btnY, sw);
-    if (g.phase === 'player') this._endBtn(sx, btnY + 40, sw);
+    if (g.phase === 'player') { this._endBtn(sx, btnY, sw); this._soundToggle(sx, btnY + 46, sw); }
+    else this._soundToggle(sx, btnY, sw);
   }
 
   _unitAt(g, cur) {
