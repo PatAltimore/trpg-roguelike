@@ -6,10 +6,11 @@
    - Single tap:  game click
    - Single drag:  pan the view
    - Pinch:  zoom in/out
-   - Double-tap:  reset zoom to fit screen                       */
+   - Double-tap:  toggle zoom (fit ↔ 2× at tap location)           */
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3.0;
+const ZOOM_IN_LEVEL = 2.0;   // zoom level for double-tap zoom-in
 const TAP_THRESHOLD = 10;     // px — max movement to count as a tap
 const TAP_TIMEOUT   = 250;    // ms — max duration for a tap
 const DBLTAP_GAP    = 300;    // ms — max gap between taps for double-tap
@@ -24,6 +25,7 @@ export class TouchController {
     this.zoom = 1;
     this.panX = 0;
     this.panY = 0;
+    this._fitZoom = 1;  // remember the fit-to-screen zoom level
 
     /* gesture tracking */
     this._touches = [];
@@ -43,6 +45,7 @@ export class TouchController {
     this._tapStartTime = 0;
     this._tapStartPos = { x: 0, y: 0 };
     this._lastTapTime = 0;
+    this._lastTapPos = { x: 0, y: 0 };
 
     /* bind events */
     canvas.addEventListener('touchstart',  e => this._onTouchStart(e), { passive: false });
@@ -62,8 +65,23 @@ export class TouchController {
     const cw = this.cv.width;
     const ch = this.cv.height;
     this.zoom = Math.min(vw / cw, vh / ch);
-    this.panX = 0;
-    this.panY = 0;
+    this._fitZoom = this.zoom;
+    /* center the canvas */
+    this.panX = (vw - cw * this.zoom) / 2;
+    this.panY = (vh - ch * this.zoom) / 2;
+    this._applyTransform();
+  }
+
+  /* ── Zoom to a specific level centered on a screen point ── */
+  _zoomToPoint(newZoom, screenX, screenY) {
+    /* find the canvas-space point under the screen tap */
+    const canvasX = (screenX - this.panX) / this.zoom;
+    const canvasY = (screenY - this.panY) / this.zoom;
+    /* set new zoom and adjust pan so the same canvas point stays under the tap */
+    this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom));
+    this.panX = screenX - canvasX * this.zoom;
+    this.panY = screenY - canvasY * this.zoom;
+    this._clampPan();
     this._applyTransform();
   }
 
@@ -77,22 +95,29 @@ export class TouchController {
     this.cv.style.maxHeight = 'none';
   }
 
-  /* ── Clamp pan so canvas doesn't drift too far off-screen ── */
+  /* ── Clamp pan so the canvas stays reachable ── */
   _clampPan() {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
     const cw = this.cv.width * this.zoom;
     const ch = this.cv.height * this.zoom;
-    /* allow some overscroll but keep at least 25% visible */
-    const marginX = Math.min(cw * 0.25, vw * 0.5);
-    const marginY = Math.min(ch * 0.25, vh * 0.5);
-    this.panX = Math.max(-(cw - marginX), Math.min(marginX + vw - cw, this.panX));
-    this.panY = Math.max(-(ch - marginY), Math.min(marginY + vh - ch, this.panY));
-  }
 
-  /* ── Convert screen touch position to the coordinate space _px() expects ── */
-  /* _px() uses getBoundingClientRect(), which accounts for CSS transforms.
-     So we just pass the raw screen coordinates through — _px() handles it. */
+    if (cw <= vw) {
+      /* canvas fits horizontally — center it */
+      this.panX = (vw - cw) / 2;
+    } else {
+      /* canvas wider than viewport — allow full scroll, right edge can't go past left, left edge can't go past right */
+      this.panX = Math.max(vw - cw, Math.min(0, this.panX));
+    }
+
+    if (ch <= vh) {
+      /* canvas fits vertically — center it */
+      this.panY = (vh - ch) / 2;
+    } else {
+      /* canvas taller than viewport — allow full scroll */
+      this.panY = Math.max(vh - ch, Math.min(0, this.panY));
+    }
+  }
 
   /* ── Touch event handlers ── */
 
@@ -153,14 +178,11 @@ export class TouchController {
         this._startZoom * (dist / this._startDist)));
 
       /* zoom centered on the pinch midpoint */
-      const ratio = newZoom / this._startZoom;
-      this.panX = midX - (this._startMidX - this._startPanX) * ratio;
-      this.panY = midY - (this._startMidY - this._startPanY) * ratio;
+      const canvasX = (this._startMidX - this._startPanX) / this._startZoom;
+      const canvasY = (this._startMidY - this._startPanY) / this._startZoom;
       this.zoom = newZoom;
-
-      /* also allow two-finger drag */
-      this.panX += midX - this._startMidX - (this.panX - this._startPanX);
-      this.panY += midY - this._startMidY - (this.panY - this._startPanY);
+      this.panX = midX - canvasX * newZoom;
+      this.panY = midY - canvasY * newZoom;
 
       this._clampPan();
       this._applyTransform();
@@ -181,12 +203,18 @@ export class TouchController {
       if (dt < TAP_TIMEOUT && dx < TAP_THRESHOLD && dy < TAP_THRESHOLD) {
         /* check for double-tap */
         if (now - this._lastTapTime < DBLTAP_GAP) {
-          this._fitToScreen();
+          /* toggle: if zoomed in, fit to screen; if fit, zoom in to tap point */
+          if (this.zoom > this._fitZoom * 1.2) {
+            this._fitToScreen();
+          } else {
+            this._zoomToPoint(ZOOM_IN_LEVEL, t.clientX, t.clientY);
+          }
           this._lastTapTime = 0;
           this._touches = [];
           return;
         }
         this._lastTapTime = now;
+        this._lastTapPos = { x: t.clientX, y: t.clientY };
 
         /* pass raw screen coords — _px() uses getBoundingClientRect()
            which already accounts for the CSS transform */

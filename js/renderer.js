@@ -479,14 +479,16 @@ export class Renderer {
     /* terrain */
     if (g.cur) y = this._terrainPanel(g, px, y, sw - 20);
 
+    /* store sidebar content bottom for action menu positioning */
+    this._sidebarContentY = y;
+
     /* combat preview */
-    if (g.preview) this._combatPreview(g.preview, sx, y, sw);
+    if (g.preview) { this._combatPreview(g.preview, sx, y, sw); y += 128; }
 
-    /* end-turn button */
-    if (g.phase === 'player') this._endBtn(sx, sh - 50, sw);
-
-    /* sound toggle */
-    this._soundToggle(sx, sh - 90, sw);
+    /* sound toggle + end-turn: place below content so visible when zoomed */
+    const btnY = y + 10;
+    this._soundToggle(sx, btnY, sw);
+    if (g.phase === 'player') this._endBtn(sx, btnY + 40, sw);
   }
 
   _unitAt(g, cur) {
@@ -575,8 +577,8 @@ export class Renderer {
     const sw = SIDEBAR_W;
     const mw = sw - 20, mh = g.menuOpts.length * itemH + pad * 2;
     const mx = sx + 10;
-    /* place below terrain panel area, roughly mid-sidebar */
-    const my = 340;
+    /* place below the stats/terrain panels (tracked by _sidebar) */
+    const my = (this._sidebarContentY || 340) + 6;
 
     /* background */
     c.fillStyle = '#0a0a20'; c.fillRect(mx - 2, my, mw + 4, mh);
