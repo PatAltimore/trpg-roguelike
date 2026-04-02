@@ -32,15 +32,16 @@ export class Unit {
     this.level = level;
     this.moved = false;  this.acted = false;  this.alive = true;
 
-    const b = c.base, g = c.gr, lv = level - 1;
-    this.maxHp = b.hp  + Math.floor(g.hp  * lv / 100);
-    this.str   = b.str + Math.floor(g.str * lv / 100);
-    this.mag   = b.mag + Math.floor(g.mag * lv / 100);
-    this.skl   = b.skl + Math.floor(g.skl * lv / 100);
-    this.spd   = b.spd + Math.floor(g.spd * lv / 100);
-    this.lck   = b.lck + Math.floor(g.lck * lv / 100);
-    this.def   = b.def + Math.floor(g.def * lv / 100);
-    this.res   = b.res + Math.floor(g.res * lv / 100);
+    const b = c.base, gr = c.gr, lv = level - 1;
+    /* growth scaled for a short 5-floor journey (divide by 20 instead of 100) */
+    this.maxHp = b.hp  + Math.floor(gr.hp  * lv / 20);
+    this.str   = b.str + Math.floor(gr.str * lv / 20);
+    this.mag   = b.mag + Math.floor(gr.mag * lv / 20);
+    this.skl   = b.skl + Math.floor(gr.skl * lv / 20);
+    this.spd   = b.spd + Math.floor(gr.spd * lv / 20);
+    this.lck   = b.lck + Math.floor(gr.lck * lv / 20);
+    this.def   = b.def + Math.floor(gr.def * lv / 20);
+    this.res   = b.res + Math.floor(gr.res * lv / 20);
     this.mov   = b.mov;
     this.hp    = this.maxHp;
   }
@@ -67,13 +68,13 @@ export function spawnParty(spawns, floor, existing) {
     return existing;
   }
   return PLAYER_CLASSES.slice(0, Math.min(4, spawns.length))
-    .map((k, i) => new Unit(k, spawns[i].x, spawns[i].y, true, Math.max(1, floor)));
+    .map((k, i) => new Unit(k, spawns[i].x, spawns[i].y, true, Math.max(1, floor + 1)));
 }
 
 export function spawnEnemies(spawns, floor) {
-  const count = Math.min(spawns.length, 3 + Math.floor(floor * 1.2));
+  const count = Math.min(spawns.length, 2 + floor);
   return spawns.slice(0, count).map((p, i) => {
-    const lv = Math.max(1, floor + Math.floor(Math.random() * 2));
+    const lv = Math.max(1, floor);
     /* tutorial spawns can specify exact class */
     const cls = p.cls || ENEMY_CLASSES[i % ENEMY_CLASSES.length];
     return new Unit(cls, p.x, p.y, false, lv);
