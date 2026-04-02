@@ -146,39 +146,63 @@ export const SFX = {
     notes.forEach((f, i) => setTimeout(() => osc('square', f, 0.15, 0.1), i * 130));
   },
 
-  /* ~4 second heroic title melody — plays once on first click */
+  /* ~5 second hero's journey title melody — hopeful departure, rising courage */
   titleMelody() {
-    /* melody: heroic ascending phrase, quick turnaround, resolving fanfare */
+    /* The melody tells a story:
+       1. Quiet, contemplative start — a lone hero at dawn
+       2. A call to adventure — ascending with growing confidence
+       3. A brief moment of doubt — descending minor turn
+       4. Resolute determination — the hero steps forward into the unknown */
     const melody = [
-      /* note, delay(ms), dur, type, vol */
-      [262, 0,    0.18, 'square', 0.10],    /* C4  */
-      [330, 180,  0.18, 'square', 0.10],    /* E4  */
-      [392, 360,  0.18, 'square', 0.10],    /* G4  */
-      [523, 540,  0.30, 'square', 0.12],    /* C5 (hold) */
-      [494, 900,  0.14, 'square', 0.10],    /* B4  */
-      [523, 1060, 0.14, 'square', 0.10],    /* C5  */
-      [587, 1220, 0.30, 'square', 0.12],    /* D5 (hold) */
-      [523, 1600, 0.14, 'square', 0.10],    /* C5  */
-      [494, 1760, 0.14, 'square', 0.10],    /* B4  */
-      [440, 1920, 0.14, 'square', 0.10],    /* A4  */
-      [392, 2100, 0.30, 'square', 0.12],    /* G4 (hold) */
-      [330, 2500, 0.14, 'square', 0.10],    /* E4  */
-      [392, 2660, 0.18, 'square', 0.10],    /* G4  */
-      [523, 2840, 0.18, 'square', 0.12],    /* C5  */
-      [659, 3020, 0.18, 'square', 0.12],    /* E5  */
-      [784, 3200, 0.50, 'square', 0.13],    /* G5 (finale) */
+      /* ── dawn: soft, open, a single figure on the horizon ── */
+      [330, 0,    0.35, 'square', 0.08],    /* E4 — gentle open       */
+      [392, 400,  0.30, 'square', 0.08],    /* G4 — looking outward   */
+      [440, 750,  0.45, 'square', 0.09],    /* A4 — the road ahead    */
+      /* ── the call: courage builds, steps quicken ── */
+      [392, 1300, 0.18, 'square', 0.10],    /* G4 — first step        */
+      [440, 1500, 0.18, 'square', 0.10],    /* A4 — then another      */
+      [523, 1700, 0.18, 'square', 0.11],    /* C5 — confidence grows  */
+      [587, 1900, 0.35, 'square', 0.12],    /* D5 — heart swells      */
+      [659, 2300, 0.40, 'square', 0.12],    /* E5 — the horizon calls */
+      /* ── doubt: a brief shadow crosses the path ── */
+      [587, 2800, 0.20, 'square', 0.10],    /* D5 — hesitation        */
+      [523, 3000, 0.20, 'square', 0.10],    /* C5 — looking back      */
+      [494, 3200, 0.30, 'square', 0.09],    /* B4 — the weight of it  */
+      /* ── resolve: turns forward, strides into destiny ── */
+      [523, 3600, 0.18, 'square', 0.11],    /* C5 — deep breath       */
+      [587, 3800, 0.18, 'square', 0.11],    /* D5 — shoulders square  */
+      [659, 4000, 0.22, 'square', 0.12],    /* E5 — eyes ahead        */
+      [784, 4250, 0.60, 'square', 0.13],    /* G5 — into the unknown  */
     ];
-    /* bass harmony */
+    /* warm sustained harmony — like a campfire or a remembered home */
+    const harmony = [
+      [330, 0,    0.50, 'triangle', 0.05],  /* E4 — warmth            */
+      [262, 750,  0.45, 'triangle', 0.05],  /* C4 — hearth            */
+      [294, 1700, 0.35, 'triangle', 0.05],  /* D4 — the road          */
+      [330, 2300, 0.40, 'triangle', 0.05],  /* E4 — courage           */
+      [262, 3200, 0.35, 'triangle', 0.05],  /* C4 — memory            */
+      [294, 3800, 0.20, 'triangle', 0.05],  /* D4 — resolve           */
+      [330, 4250, 0.60, 'triangle', 0.06],  /* E4 — onward            */
+    ];
+    /* bass: slow, grounding footsteps of the journey */
     const bass = [
-      [131, 0,    0.35, 'triangle', 0.06],  /* C3  */
-      [165, 540,  0.35, 'triangle', 0.06],  /* E3  */
-      [196, 1220, 0.35, 'triangle', 0.06],  /* G3  */
-      [175, 1920, 0.35, 'triangle', 0.06],  /* F3  */
-      [131, 2500, 0.35, 'triangle', 0.06],  /* C3  */
-      [196, 3200, 0.50, 'triangle', 0.07],  /* G3 (finale) */
+      [165, 0,    0.50, 'triangle', 0.06],  /* E3 — dawn              */
+      [131, 750,  0.50, 'triangle', 0.06],  /* C3 — home              */
+      [147, 1700, 0.40, 'triangle', 0.06],  /* D3 — the path          */
+      [165, 2300, 0.45, 'triangle', 0.06],  /* E3 — ascending         */
+      [131, 3200, 0.40, 'triangle', 0.06],  /* C3 — shadow            */
+      [147, 3800, 0.25, 'triangle', 0.06],  /* D3 — turning point     */
+      [196, 4250, 0.70, 'triangle', 0.07],  /* G3 — destiny           */
     ];
-    for (const [f, d, dur, type, vol] of [...melody, ...bass]) {
+    /* gentle percussion — like distant drums or a heartbeat */
+    const drums = [
+      [1300], [1700], [1900], [3600], [3800], [4000],
+    ];
+    for (const [f, d, dur, type, vol] of [...melody, ...harmony, ...bass]) {
       setTimeout(() => osc(type, f, dur, vol), d);
+    }
+    for (const [d] of drums) {
+      setTimeout(() => noise(0.03, 0.04), d);
     }
   },
 
