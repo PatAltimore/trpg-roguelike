@@ -82,30 +82,50 @@ export class Renderer {
     c.fillText('ROGUELIKE TACTICS RPG', mx, my - 72);
 
     /* menu buttons */
-    const bw = 200, bh = 38, gap = 14;
+    const bw = 200, bh = 32, gap = 10;
     const bx = mx - bw / 2;
-    const by1 = my + 80, by2 = by1 + bh + gap;
+    const by0 = my + 72;
+    const by1 = by0 + bh + gap;
+    const by2 = by1 + bh + gap;
+    const by3 = by2 + bh + gap;
 
     /* TUTORIAL button */
-    c.fillStyle = '#1a2a60'; c.fillRect(bx, by1, bw, bh);
-    c.strokeStyle = '#4060d0'; c.lineWidth = 2; c.strokeRect(bx, by1, bw, bh);
+    c.fillStyle = '#1a2a60'; c.fillRect(bx, by0, bw, bh);
+    c.strokeStyle = '#4060d0'; c.lineWidth = 2; c.strokeRect(bx, by0, bw, bh);
     c.fillStyle = '#80b0ff'; c.font = `10px ${FONT}`; c.textAlign = 'center';
-    c.fillText('TUTORIAL', mx, by1 + 24);
+    c.fillText('TUTORIAL', mx, by0 + 21);
 
-    /* START button */
+    /* EASY button */
+    c.fillStyle = '#1a3010'; c.fillRect(bx, by1, bw, bh);
+    c.strokeStyle = '#40a030'; c.lineWidth = 2; c.strokeRect(bx, by1, bw, bh);
+    c.fillStyle = '#60e040'; c.font = `10px ${FONT}`;
+    c.fillText('EASY', mx, by1 + 21);
+
+    /* MEDIUM button */
     c.fillStyle = '#2a1a10'; c.fillRect(bx, by2, bw, bh);
     c.strokeStyle = '#c08030'; c.lineWidth = 2; c.strokeRect(bx, by2, bw, bh);
     c.fillStyle = C.GOLD; c.font = `10px ${FONT}`;
-    c.fillText('START GAME', mx, by2 + 24);
+    c.fillText('MEDIUM', mx, by2 + 21);
+
+    /* HARD button */
+    c.fillStyle = '#301010'; c.fillRect(bx, by3, bw, bh);
+    c.strokeStyle = '#c03030'; c.lineWidth = 2; c.strokeRect(bx, by3, bw, bh);
+    c.fillStyle = '#ff4040'; c.font = `10px ${FONT}`;
+    c.fillText('HARD', mx, by3 + 21);
 
     /* store button bounds for click detection */
-    this._titleBtns = { tutorial: { x: bx, y: by1, w: bw, h: bh }, start: { x: bx, y: by2, w: bw, h: bh } };
+    this._titleBtns = {
+      tutorial: { x: bx, y: by0, w: bw, h: bh },
+      easy:     { x: bx, y: by1, w: bw, h: bh },
+      medium:   { x: bx, y: by2, w: bw, h: bh },
+      hard:     { x: bx, y: by3, w: bw, h: bh },
+    };
 
     c.fillStyle = '#606060';
     c.font = `7px ${FONT}`;
-    c.fillText('Select unit \u2192 click destination \u2192 Attack / Wait', mx, by2 + bh + 24);
-    c.fillText('Defeat all enemies to advance.  Lord dies = Game Over.', mx, by2 + bh + 42);
-    c.fillText('Weapon triangle: Sword > Axe > Lance > Sword', mx, by2 + bh + 60);
+    c.fillText('Select unit \u2192 click destination \u2192 Attack / Wait', mx, by3 + bh + 20);
+    c.fillText('Defeat all enemies to advance.  Lord dies = Game Over.', mx, by3 + bh + 36);
+    c.fillText('Weapon triangle: Sword > Axe > Lance > Sword', mx, by3 + bh + 52);
   }
 
   /* ── Pixel art battle scene for title screen ── */
@@ -432,11 +452,16 @@ export class Renderer {
                      : g.floor >= FINAL_FLOOR ? 'FINAL BATTLE'
                      : `FLOOR ${g.floor}`;
     c.fillText(floorLabel, px, y); y += 20;
-    /* floor theme subtitle */
+    /* floor theme + difficulty subtitle */
     if (g.map && g.map._floorTheme) {
       c.fillStyle = '#707090'; c.font = `6px ${FONT}`;
       const names = { forest:'The Wilds', fortress:'Enemy Stronghold', gauntlet:'Perilous Pass', open_field:'Open Field', mixed:'War Zone', boss:"Warlord's Throne" };
       c.fillText(names[g.map._floorTheme] || '', px, y); y += 12;
+    }
+    if (g.difficulty) {
+      const dc = { easy:'#40a030', medium:'#c0a020', hard:'#c03030' };
+      c.fillStyle = dc[g.difficulty] || '#707090'; c.font = `6px ${FONT}`;
+      c.fillText(g.difficulty.toUpperCase(), px, y); y += 12;
     }
     c.fillStyle = g.phase === 'player' ? '#6080ff' : '#ff6060';
     c.font = `9px ${FONT}`;

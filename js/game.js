@@ -36,6 +36,7 @@ class Game {
     this.phase = 'player';
     this.floor = 0;
     this.turn  = 1;
+    this.difficulty = 'easy';  // 'easy', 'medium', 'hard'
 
     this.map     = null;
     this.players = [];
@@ -124,8 +125,8 @@ class Game {
   _startLevel() {
     this.map = new GameMap(this.floor);
 
-    this.players = spawnParty(this.map.playerSpawns, this.floor, null);
-    this.enemies = spawnEnemies(this.map.enemySpawns, this.floor);
+    this.players = spawnParty(this.map.playerSpawns, this.floor, null, this.difficulty);
+    this.enemies = spawnEnemies(this.map.enemySpawns, this.floor, this.difficulty);
 
     this.state = S_IDLE;
     this.phase = 'player';
@@ -179,10 +180,16 @@ class Game {
       if (btns) {
         const hit = (b) => b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
         if (hit(btns.tutorial)) {
-          SFX.titleMelody(); this.floor = 0; this._startLevel(); return;
+          SFX.titleMelody(); this.difficulty = 'easy'; this.floor = 0; this._startLevel(); return;
         }
-        if (hit(btns.start)) {
-          SFX.titleMelody(); this.floor = 1; this._startLevel(); return;
+        if (hit(btns.easy)) {
+          SFX.titleMelody(); this.difficulty = 'easy'; this.floor = 1; this._startLevel(); return;
+        }
+        if (hit(btns.medium)) {
+          SFX.titleMelody(); this.difficulty = 'medium'; this.floor = 1; this._startLevel(); return;
+        }
+        if (hit(btns.hard)) {
+          SFX.titleMelody(); this.difficulty = 'hard'; this.floor = 1; this._startLevel(); return;
         }
       }
       return;

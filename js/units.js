@@ -59,7 +59,16 @@ export class Unit {
 const PLAYER_CLASSES = ['LORD','FIGHTER','MAGE','ARCHER'];
 const ENEMY_CLASSES  = ['SOLDIER','BRIGAND','DARK_MAGE','E_ARCHER'];
 
-export function spawnParty(spawns, floor, existing) {
+/*  Difficulty balance table
+    ───────────────────────────────────────────────────────
+              │  Easy        │  Medium      │  Hard
+    ──────────┼──────────────┼──────────────┼──────────────
+    Player lv │  floor + 1   │  floor       │  floor
+    Enemy  lv │  floor       │  floor       │  floor + 1
+    Enemy cnt │  2 + floor   │  3 + floor   │  3 + floor×1.5
+    ───────────────────────────────────────────────────────  */
+
+export function spawnParty(spawns, floor, existing, diff = 'easy') {
   if (existing && existing.length) {
     existing.forEach((u, i) => {
       const p = spawns[i % spawns.length];
@@ -67,14 +76,19 @@ export function spawnParty(spawns, floor, existing) {
     });
     return existing;
   }
+  const lvBonus = diff === 'easy' ? 1 : 0;
   return PLAYER_CLASSES.slice(0, Math.min(4, spawns.length))
-    .map((k, i) => new Unit(k, spawns[i].x, spawns[i].y, true, Math.max(1, floor + 1)));
+    .map((k, i) => new Unit(k, spawns[i].x, spawns[i].y, true, Math.max(1, floor + lvBonus)));
 }
 
-export function spawnEnemies(spawns, floor) {
-  const count = Math.min(spawns.length, 2 + floor);
+export function spawnEnemies(spawns, floor, diff = 'easy') {
+  const countBase = diff === 'easy'   ? 2 + floor
+                  : diff === 'medium' ? 3 + floor
+                  :                     3 + Math.floor(floor * 1.5);
+  const count = Math.min(spawns.length, countBase);
+  const lvBonus = diff === 'hard' ? 1 : 0;
   return spawns.slice(0, count).map((p, i) => {
-    const lv = Math.max(1, floor);
+    const lv = Math.max(1, floor + lvBonus);
     /* tutorial spawns can specify exact class */
     const cls = p.cls || ENEMY_CLASSES[i % ENEMY_CLASSES.length];
     return new Unit(cls, p.x, p.y, false, lv);
