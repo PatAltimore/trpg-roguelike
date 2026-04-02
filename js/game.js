@@ -10,6 +10,7 @@ import { resolve, forecast, canCounter, inRange } from './combat.js';
 import { planEnemyTurn }         from './ai.js';
 import { Renderer }              from './renderer.js';
 import { SFX, isMuted, toggleMute } from './audio.js';
+import { TouchController } from './touch.js';
 
 /* ═══════════ Tutorial messages ═══════════
    Each fires once, triggered by game events.
@@ -77,13 +78,8 @@ class Game {
     this.cv.addEventListener('mousemove',   e => this._hover(e));
     document.addEventListener('keydown',    e => { if (e.key === 'Escape') this._cancel(); });
 
-    /* mobile touch support */
-    this.cv.addEventListener('touchstart', e => {
-      e.preventDefault();
-      const t = e.touches[0];
-      this._hover(t);
-      this._click(t);
-    }, { passive: false });
+    /* mobile touch support — pinch-zoom, pan, tap-to-play */
+    this.touch = new TouchController(this.cv, this);
     this._loop();
   }
 
