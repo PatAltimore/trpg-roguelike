@@ -4,6 +4,12 @@ import { inRange } from './combat.js';
 export function planEnemyTurn(enemies, players, map) {
   const all = [...enemies, ...players];
   const actions = [];
+  /* track tiles claimed by earlier enemies so they don't overlap */
+  const claimed = new Set();
+  for (const e of enemies) {
+    if (!e.alive) continue;
+    claimed.add(`${e.x},${e.y}`);
+  }
 
   for (const e of enemies) {
     if (!e.alive) continue;
@@ -24,11 +30,16 @@ export function planEnemyTurn(enemies, players, map) {
       continue;
     }
 
+    /* remove this enemy's current tile from claimed (it's about to move) */
+    claimed.delete(`${e.x},${e.y}`);
+
     /* find tile to move to */
     const tiles = reachable(e, map, all);
     let pick = null, pickD = Infinity, pickAtk = false;
 
     for (const t of tiles) {
+      /* skip tiles already claimed by another enemy */
+      if (claimed.has(`${t.x},${t.y}`)) continue;
       const d = Math.abs(t.x - best.x) + Math.abs(t.y - best.y);
       const [lo, hi] = e.weapon.rng;
       const canAtk = d >= lo && d <= hi;
@@ -41,8 +52,12 @@ export function planEnemyTurn(enemies, players, map) {
       const [lo, hi] = e.weapon.rng;
       const canAtk = d2 >= lo && d2 <= hi;
       actions.push({ unit: e, type: canAtk ? 'move_attack' : 'move', target: canAtk ? best : null, mx: pick.x, my: pick.y });
+      /* claim the destination tile */
+      claimed.add(`${pick.x},${pick.y}`);
     } else {
       actions.push({ unit: e, type: 'wait', mx: e.x, my: e.y });
+      /* re-claim current position since we didn't move */
+      claimed.add(`${e.x},${e.y}`);
     }
   }
   return actions;

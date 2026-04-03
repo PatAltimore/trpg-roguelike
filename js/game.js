@@ -401,7 +401,14 @@ class Game {
     const a = this._eActions[this._eIdx++];
     if (!a.unit.alive) return;
 
-    if (a.mx !== undefined) { a.unit.x = a.mx; a.unit.y = a.my; }
+    if (a.mx !== undefined) {
+      /* prevent two enemies from occupying the same tile */
+      const occupied = this.enemies.some(e => e !== a.unit && e.alive && e.x === a.mx && e.y === a.my);
+      if (!occupied) {
+        a.unit.x = a.mx; a.unit.y = a.my;
+      }
+      /* if occupied, skip the move but still try to attack from current position */
+    }
 
     if ((a.type === 'attack' || a.type === 'move_attack') && a.target && a.target.alive) {
       if (inRange(a.unit, a.target.x, a.target.y)) {
