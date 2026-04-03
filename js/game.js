@@ -65,6 +65,7 @@ class Game {
     /* combat animation */
     this._combatLog = [];
     this._combatIdx = 0;
+    this._enemyCombatPending = false;
     this._combatTimer = 0;
 
     /* tutorial */
@@ -355,10 +356,20 @@ class Game {
       if (this.enemies.length < hadEnemies || this.players.length < hadPlayers) SFX.kill();
       /* tutorial: first kill tip */
       if (this.tut && this.enemies.length < hadEnemies) this._tutShow('first_kill');
-      /* exit combat anim state before _deselect, which won't transition from S_COMBAT_ANIM */
-      this.state = S_IDLE;
-      this._deselect();
-      this._checkEnd();
+
+      if (this._enemyCombatPending) {
+        /* resume enemy turn after enemy-initiated combat */
+        this._enemyCombatPending = false;
+        this.state = S_ENEMY_TURN;
+        this._eTimer = 0;
+        this._deselect();
+        this._checkEnd();
+      } else {
+        /* player-initiated combat — return to idle */
+        this.state = S_IDLE;
+        this._deselect();
+        this._checkEnd();
+      }
     }
   }
 
@@ -394,12 +405,9 @@ class Game {
 
     if ((a.type === 'attack' || a.type === 'move_attack') && a.target && a.target.alive) {
       if (inRange(a.unit, a.target.x, a.target.y)) {
-        const at = this.map.at(a.unit.x, a.unit.y);
-        const dt = this.map.at(a.target.x, a.target.y);
-        resolve(a.unit, a.target, at, dt);
-        this.enemies = this.enemies.filter(e => e.alive);
-        this.players = this.players.filter(p => p.alive);
-        this._checkEnd();
+        /* use the same combat animation as player attacks */
+        this._enemyCombatPending = true;
+        this._doCombat(a.unit, a.target);
       }
     }
   }
