@@ -199,15 +199,6 @@ class Game {
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
         this.state === S_TRANS_OUT || this.state === S_TRANS_IN) return;
 
-    /* sidebar buttons */
-    if (px >= mapW) {
-      /* end-turn button */
-      if (this.phase === 'player') {
-        const b = this.ren.endTurnBtn;
-        if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) { this._endPlayerTurn(); return; }
-      }
-    }
-
     /* action menu — clicking outside the menu cancels (undo move) */
     if (this.state === S_ACTION_MENU) {
       const b = this._menuBounds;
@@ -224,6 +215,12 @@ class Game {
       if (cx < 0 || cx >= COLS || cy < 0 || cy >= ROWS) { this._cancel(); return; }
       this._clickAtkSelect(cx, cy);
       return;
+    }
+
+    /* end-turn button (only in idle / unit-select, not during action menu or atk select) */
+    if (px >= mapW && this.phase === 'player') {
+      const b = this.ren.endTurnBtn;
+      if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) { this._endPlayerTurn(); return; }
     }
 
     if (cx < 0 || cx >= COLS || cy < 0 || cy >= ROWS) return;

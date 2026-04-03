@@ -485,9 +485,10 @@ export class Renderer {
     /* combat preview */
     if (g.preview) { this._combatPreview(g.preview, sx, y, sw); y += 128; }
 
-    /* end-turn + sound toggle: place below content so visible when zoomed */
+    /* end-turn + sound toggle: place below content, but hide when action menu / atk select is active */
+    const showEndBtn = g.phase === 'player' && g.state !== S_ACTION_MENU && g.state !== S_ATK_SELECT;
     const btnY = y + 10;
-    if (g.phase === 'player') { this._endBtn(sx, btnY, sw); this._soundToggle(sx, btnY + 46, sw); }
+    if (showEndBtn) { this._endBtn(sx, btnY, sw); this._soundToggle(sx, btnY + 46, sw); }
     else this._soundToggle(sx, btnY, sw);
   }
 
