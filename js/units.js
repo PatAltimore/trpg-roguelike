@@ -79,7 +79,7 @@ export function spawnParty(spawns, floor, existing, diff = 'easy', roster = null
     existing.forEach((u, i) => {
       const p = spawns[i % spawns.length];
       u.x = p.x; u.y = p.y;
-      u.hp = u.maxHp; u.alive = true;
+      u.alive = true;
       u.reset();
     });
     return existing;
