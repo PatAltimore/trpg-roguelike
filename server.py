@@ -1,5 +1,8 @@
 """Dev server with cache-busting headers for ES modules."""
-import http.server, functools
+import http.server, os, pathlib
+
+# Always serve from the project directory
+os.chdir(r'C:\Users\palti\git\trpg-roguelike')
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):

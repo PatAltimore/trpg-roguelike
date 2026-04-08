@@ -1,6 +1,17 @@
 import { reachable } from './map.js';
 import { inRange } from './combat.js';
 
+/**
+ * Plan enemy turn actions.
+ *
+ * AI modes (assigned per-unit based on position/type):
+ *   'guard'      – stays in place until a player enters threat range
+ *                  (move range + weapon range), then pursues
+ *   'aggressive' – always chases the nearest player
+ *
+ * Boss units and units that start near players are aggressive.
+ * Most other units are guards — like classic Fire Emblem.
+ */
 export function planEnemyTurn(enemies, players, map) {
   const all = [...enemies, ...players];
   const actions = [];
@@ -11,9 +22,10 @@ export function planEnemyTurn(enemies, players, map) {
     claimed.add(`${e.x},${e.y}`);
   }
 
+  const alive = players.filter(p => p.alive);
+
   for (const e of enemies) {
     if (!e.alive) continue;
-    const alive = players.filter(p => p.alive);
     if (!alive.length) break;
 
     /* nearest player */
@@ -24,16 +36,27 @@ export function planEnemyTurn(enemies, players, map) {
     }
     if (!best) { actions.push({ unit: e, type: 'wait' }); continue; }
 
-    /* can attack without moving? */
+    /* determine AI mode: guard or aggressive */
+    const threatRange = e.mov + e.weapon.rng[1];
+    const isAggressive = e._ai === 'aggressive'   // explicitly set (bosses)
+                      || bestD <= threatRange + 2; // player is nearby (within threat range + small buffer)
+
+    /* can attack without moving? always take the shot */
     if (inRange(e, best.x, best.y)) {
       actions.push({ unit: e, type: 'attack', target: best, mx: e.x, my: e.y });
+      continue;
+    }
+
+    /* guard mode: stay put if no player is in threat range */
+    if (!isAggressive) {
+      actions.push({ unit: e, type: 'wait', mx: e.x, my: e.y });
       continue;
     }
 
     /* remove this enemy's current tile from claimed (it's about to move) */
     claimed.delete(`${e.x},${e.y}`);
 
-    /* find tile to move to */
+    /* find best tile to move to */
     const tiles = reachable(e, map, all);
     let pick = null, pickD = Infinity, pickAtk = false;
 

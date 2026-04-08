@@ -2,10 +2,11 @@ import {
   TILE, COLS, ROWS, SIDEBAR_W, CANVAS_W, CANVAS_H, C,
   T_PLAIN, T_FOREST, T_MOUNTAIN, T_WATER, T_WALL, T_ROAD, T_FORT,
   S_TITLE, S_ACTION_MENU, S_WIN, S_LOSE, S_ATK_SELECT, S_COMBAT_ANIM,
-  S_TRANS_OUT, S_TRANS_IN, S_VICTORY, FINAL_FLOOR,
+  S_TRANS_OUT, S_TRANS_IN, S_VICTORY, S_DRAFT, S_BONUS, FINAL_FLOOR,
 } from './constants.js';
 import { forecast, canCounter, inRange } from './combat.js';
 import { isMuted } from './audio.js';
+import { CLASS_INFO, DRAFT_POOL } from './units.js';
 
 const FONT = '"Press Start 2P", monospace';
 
@@ -18,6 +19,8 @@ export class Renderer {
     this.t = 0;
     this._btn = null;          /* end-turn button bounds */
     this._sndBtn = null;       /* sound toggle button bounds */
+    this._draftBounds = null;  /* draft screen click targets */
+    this._bonusBounds = null;  /* bonus screen click targets */
   }
 
   tick() { this.t++; }
@@ -30,6 +33,8 @@ export class Renderer {
     c.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
     if (g.state === S_TITLE)   { this._title(); this._soundToggle(CANVAS_W - SIDEBAR_W, CANVAS_H - 40, SIDEBAR_W); return; }
+    if (g.state === S_DRAFT)   { this._draftScreen(g); return; }
+    if (g.state === S_BONUS)   { this._bonusScreen(g); return; }
     if (g.state === S_VICTORY) { this._victoryScreen(g); return; }
 
     this._map(g.map);
@@ -79,7 +84,7 @@ export class Renderer {
 
     c.fillStyle = '#5050cc';
     c.font = `10px ${FONT}`;
-    c.fillText('ROGUELIKE TACTICS RPG', mx, my - 72);
+    c.fillText('ROGUELIKE TACTICAL RPG', mx, my - 72);
 
     /* menu buttons */
     const bw = 200, bh = 32, gap = 10;
@@ -419,6 +424,7 @@ export class Renderer {
 
   _helm(k) {
     return { LORD:'#c0a000', FIGHTER:'#808080', MAGE:'#a000c0', ARCHER:'#206040',
+             HEALER:'#e0e040', CAVALIER:'#208040', KNIGHT:'#4060a0',
              SOLDIER:'#804040', BRIGAND:'#604020', DARK_MAGE:'#300060', E_ARCHER:'#604040',
              WARLORD:'#ff0000' }[k] || '#888';
   }
@@ -482,8 +488,11 @@ export class Renderer {
     /* store sidebar content bottom for action menu positioning */
     this._sidebarContentY = y;
 
-    /* combat preview */
-    if (g.preview) { this._combatPreview(g.preview, sx, y, sw); y += 128; }
+    /* combat / heal preview */
+    if (g.preview) {
+      if (g.preview.heal) { this._healPreview(g.preview, sx, y, sw); y += 80; }
+      else { this._combatPreview(g.preview, sx, y, sw); y += 128; }
+    }
 
     /* end-turn + sound toggle: place below content, but hide when action menu / atk select is active */
     const showEndBtn = g.phase === 'player' && g.state !== S_ACTION_MENU && g.state !== S_ATK_SELECT;
@@ -872,5 +881,228 @@ export class Renderer {
       c.font = `8px ${FONT}`;
       c.fillText('Click to return to title...', mx, CANVAS_H - 16);
     }
+  }
+
+  /* ═══════════ HEAL PREVIEW ═══════════ */
+  _healPreview(pv, sx, y, sw) {
+    const c = this.cx, x = sx + 10, w = sw - 20;
+    c.fillStyle = '#0d200d'; c.fillRect(x - 4, y, w + 8, 70);
+    c.strokeStyle = '#20c040'; c.lineWidth = 2; c.strokeRect(x - 4, y, w + 8, 70);
+
+    c.fillStyle = '#60ff80'; c.font = `8px ${FONT}`; c.textAlign = 'center';
+    c.fillText('HEAL PREVIEW', sx + sw / 2, y + 14);
+
+    c.textAlign = 'left'; c.font = `7px ${FONT}`;
+    c.fillStyle = '#80ff80';
+    c.fillText(pv.target.name, x, y + 32);
+    c.fillStyle = C.TXT;
+    c.fillText(`HP ${pv.target.hp}/${pv.target.maxHp}  \u2192  ${Math.min(pv.target.maxHp, pv.target.hp + pv.amount)}`, x, y + 48);
+    c.fillStyle = '#60ff80';
+    c.fillText(`+${pv.amount} HP`, x, y + 62);
+  }
+
+  /* ═══════════ DRAFT SCREEN ═══════════ */
+  _draftScreen(g) {
+    const c = this.cx;
+    c.fillStyle = '#0a0a1a';
+    c.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    const mx = CANVAS_W / 2;
+
+    /* title */
+    c.textAlign = 'center';
+    c.fillStyle = C.GOLD; c.font = `18px ${FONT}`;
+    c.fillText('DRAFT YOUR TEAM', mx, 40);
+
+    c.fillStyle = '#8080c0'; c.font = `8px ${FONT}`;
+    c.fillText('Lord always leads. Pick 3 more units.', mx, 60);
+
+    /* Lord card (always selected) */
+    const lordInfo = CLASS_INFO['LORD'];
+    const lordX = mx - 80, lordY = 76;
+    c.fillStyle = '#1a2a60'; c.fillRect(lordX, lordY, 160, 36);
+    c.strokeStyle = C.GOLD; c.lineWidth = 2; c.strokeRect(lordX, lordY, 160, 36);
+    c.fillStyle = C.GOLD; c.font = `9px ${FONT}`; c.textAlign = 'center';
+    c.fillText(`\u2605 ${lordInfo.name} - ${lordInfo.w.name}`, mx, lordY + 22);
+
+    /* class cards — 3 columns x 2 rows */
+    const pool = g._draftPool;
+    const picks = g._draftPicks;
+    const cardW = 300, cardH = 140, gap = 16;
+    const cols = 3, rows = 2;
+    const gridW = cols * cardW + (cols - 1) * gap;
+    const startX = (CANVAS_W - gridW) / 2;
+    const startY = 126;
+
+    const bounds = { cards: [], confirm: null };
+
+    for (let i = 0; i < pool.length; i++) {
+      const col = i % cols, row = Math.floor(i / cols);
+      const cx = startX + col * (cardW + gap);
+      const cy = startY + row * (cardH + gap);
+      const cls = pool[i];
+      const info = CLASS_INFO[cls];
+      const selected = picks.includes(cls);
+
+      /* card background */
+      c.fillStyle = selected ? '#1a3050' : '#101020';
+      c.fillRect(cx, cy, cardW, cardH);
+      c.strokeStyle = selected ? '#40a0ff' : '#303050';
+      c.lineWidth = selected ? 3 : 1;
+      c.strokeRect(cx, cy, cardW, cardH);
+
+      /* class color bar */
+      c.fillStyle = info.hue;
+      c.fillRect(cx, cy, 6, cardH);
+
+      /* name + weapon */
+      c.textAlign = 'left';
+      c.fillStyle = selected ? '#60c0ff' : '#c0c0c0';
+      c.font = `10px ${FONT}`;
+      c.fillText(info.name, cx + 14, cy + 18);
+      c.fillStyle = '#808090'; c.font = `7px ${FONT}`;
+      c.fillText(info.w.name + (info.w.heal ? ' (Heal)' : '') + `  Rng:${info.w.rng[0]}-${info.w.rng[1]}`, cx + 14, cy + 32);
+
+      /* stats */
+      const b = info.base;
+      const stats = [
+        ['HP', b.hp], ['STR', b.str], ['MAG', b.mag], ['SKL', b.skl],
+        ['SPD', b.spd], ['DEF', b.def], ['RES', b.res], ['MOV', b.mov],
+      ];
+      c.font = `7px ${FONT}`;
+      for (let s = 0; s < stats.length; s++) {
+        const scol = s % 4, srow = Math.floor(s / 4);
+        const sx = cx + 14 + scol * 70;
+        const sy = cy + 52 + srow * 18;
+        c.fillStyle = '#6060a0'; c.fillText(stats[s][0], sx, sy);
+        c.fillStyle = '#d0d0d0'; c.fillText(String(stats[s][1]).padStart(2), sx + 30, sy);
+      }
+
+      /* growth hint */
+      c.fillStyle = '#505060'; c.font = `6px ${FONT}`;
+      const topGrowths = Object.entries(info.gr)
+        .filter(([k]) => k !== 'hp')
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([k]) => k.toUpperCase());
+      c.fillText('Best: ' + topGrowths.join(', '), cx + 14, cy + 98);
+
+      /* description */
+      const descs = {
+        FIGHTER: 'High HP & STR. Slow but hits hard.',
+        MAGE: 'Ranged magic. Fragile but strong vs RES.',
+        ARCHER: 'Range 2 only. High SKL, no melee.',
+        HEALER: 'Heals allies. Low combat stats.',
+        CAVALIER: 'High MOV. Balanced melee/ranged.',
+        KNIGHT: 'Massive DEF, low SPD. A wall.',
+      };
+      c.fillStyle = '#707080'; c.font = `6px ${FONT}`;
+      c.fillText(descs[cls] || '', cx + 14, cy + 114);
+
+      /* selection checkmark */
+      if (selected) {
+        c.fillStyle = '#40ff80'; c.font = `14px ${FONT}`; c.textAlign = 'right';
+        c.fillText('\u2713', cx + cardW - 10, cy + 22);
+      }
+
+      bounds.cards.push({ x: cx, y: cy, w: cardW, h: cardH });
+    }
+
+    /* pick counter */
+    c.textAlign = 'center';
+    c.fillStyle = picks.length === 3 ? '#40ff80' : '#c0c0c0';
+    c.font = `9px ${FONT}`;
+    c.fillText(`${picks.length} / 3 selected`, mx, startY + rows * (cardH + gap) + 20);
+
+    /* confirm button */
+    const btnW = 200, btnH = 36;
+    const btnX = mx - btnW / 2;
+    const btnY = startY + rows * (cardH + gap) + 34;
+    const canConfirm = picks.length === 3;
+    c.fillStyle = canConfirm ? '#103820' : '#101010';
+    c.fillRect(btnX, btnY, btnW, btnH);
+    c.strokeStyle = canConfirm ? '#40c060' : '#303030';
+    c.lineWidth = 2; c.strokeRect(btnX, btnY, btnW, btnH);
+    c.fillStyle = canConfirm ? '#60ff80' : '#404040';
+    c.font = `10px ${FONT}`;
+    c.fillText('CONFIRM', mx, btnY + 23);
+
+    if (canConfirm) bounds.confirm = { x: btnX, y: btnY, w: btnW, h: btnH };
+
+    this._draftBounds = bounds;
+  }
+
+  /* ═══════════ BONUS SCREEN ═══════════ */
+  _bonusScreen(g) {
+    const c = this.cx;
+    c.fillStyle = '#0a0a1a';
+    c.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+    const mx = CANVAS_W / 2;
+
+    /* title */
+    c.textAlign = 'center';
+    c.fillStyle = C.GOLD; c.font = `16px ${FONT}`;
+    c.fillText('FLOOR CLEARED!', mx, 50);
+    c.fillStyle = '#8080c0'; c.font = `8px ${FONT}`;
+    c.fillText('Choose a reward before advancing.', mx, 74);
+
+    /* reward cards */
+    const opts = g._bonusOpts;
+    const cardW = 260, cardH = 200, gap = 30;
+    const totalW = opts.length * cardW + (opts.length - 1) * gap;
+    const startX = (CANVAS_W - totalW) / 2;
+    const startY = 110;
+
+    const bounds = { cards: [] };
+    const icons = { RECRUIT: '\u2694', STRENGTHEN: '\u2B06', FORTIFY: '\u2764' };
+    const colors = { RECRUIT: '#4080ff', STRENGTHEN: '#ffd740', FORTIFY: '#40ff80' };
+
+    for (let i = 0; i < opts.length; i++) {
+      const opt = opts[i];
+      const cx = startX + i * (cardW + gap);
+      const cy = startY;
+
+      /* card */
+      c.fillStyle = '#101028';
+      c.fillRect(cx, cy, cardW, cardH);
+      c.strokeStyle = colors[opt.label] || '#606060';
+      c.lineWidth = 2;
+      c.strokeRect(cx, cy, cardW, cardH);
+
+      /* icon */
+      c.fillStyle = colors[opt.label] || '#ffffff';
+      c.font = `28px ${FONT}`; c.textAlign = 'center';
+      c.fillText(icons[opt.label] || '?', cx + cardW / 2, cy + 50);
+
+      /* label */
+      c.fillStyle = colors[opt.label] || '#ffffff';
+      c.font = `12px ${FONT}`;
+      c.fillText(opt.label, cx + cardW / 2, cy + 90);
+
+      /* description */
+      c.fillStyle = '#a0a0c0'; c.font = `7px ${FONT}`;
+      /* wrap description text */
+      const words = opt.desc.split(' ');
+      let line = '', ly = cy + 120;
+      for (const w of words) {
+        const test = line + (line ? ' ' : '') + w;
+        if (c.measureText(test).width > cardW - 30) {
+          c.fillText(line, cx + cardW / 2, ly);
+          line = w; ly += 14;
+        } else {
+          line = test;
+        }
+      }
+      if (line) c.fillText(line, cx + cardW / 2, ly);
+
+      /* hover prompt */
+      c.fillStyle = '#505070'; c.font = `6px ${FONT}`;
+      c.fillText('Click to select', cx + cardW / 2, cy + cardH - 16);
+
+      bounds.cards.push({ x: cx, y: cy, w: cardW, h: cardH });
+    }
+
+    this._bonusBounds = bounds;
   }
 }

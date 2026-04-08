@@ -11,8 +11,6 @@ A tactical RPG with procedurally generated levels, inspired by Fire Emblem and r
 - **4 enemy types**: Soldier (lance), Brigand (axe), Dark Mage (thunder), Archer (bow)
 - **Terrain effects**: Forests (+DEF/AVO), Forts (heal + DEF/AVO), Roads, Mountains, Water
 - **Combat system**: Hit%, damage, critical hits, double attacks (speed-based), counter-attacks
-- **Permadeath**: Units that fall stay dead. Lord dies = Game Over
-- **Infinite floors**: Defeat all enemies to advance. Enemies scale with floor level
 
 ## How to Play
 

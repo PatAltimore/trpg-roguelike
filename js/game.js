@@ -2,10 +2,10 @@ import {
   TILE, COLS, ROWS, CANVAS_W, CANVAS_H,
   S_TITLE, S_IDLE, S_UNIT_SEL, S_ACTION_MENU, S_ATK_SELECT,
   S_COMBAT_ANIM, S_ENEMY_TURN, S_WIN, S_LOSE,
-  S_TRANS_OUT, S_TRANS_IN, S_VICTORY, FINAL_FLOOR,
+  S_TRANS_OUT, S_TRANS_IN, S_VICTORY, S_DRAFT, S_BONUS, FINAL_FLOOR,
 } from './constants.js';
 import { GameMap, reachable }    from './map.js';
-import { spawnParty, spawnEnemies } from './units.js';
+import { spawnParty, spawnEnemies, DRAFT_POOL, CLASS_INFO, Unit } from './units.js';
 import { resolve, forecast, canCounter, inRange } from './combat.js';
 import { planEnemyTurn }         from './ai.js';
 import { Renderer }              from './renderer.js';
@@ -49,6 +49,7 @@ class Game {
     this.atkRange  = null;
     this.preview   = null;
     this.cur       = { x: 0, y: 0 };
+    this._inspecting = false;
 
     /* action menu */
     this.menuPos  = null;
@@ -56,6 +57,16 @@ class Game {
     this.menuIdx  = 0;
     this._menuBounds = null;
     this._prevPos = null;
+
+    /* team draft */
+    this.roster    = null;   // ['LORD','FIGHTER',...] chosen classes
+    this._draftPool = [];    // available picks
+    this._draftSel  = 0;    // cursor index
+    this._draftPicks = [];   // currently picked classes
+
+    /* post-floor bonus */
+    this._bonusOpts = [];    // [{label, desc, action}]
+    this._bonusSel  = 0;
 
     /* enemy turn queue */
     this._eActions = null;
@@ -67,6 +78,7 @@ class Game {
     this._combatIdx = 0;
     this._enemyCombatPending = false;
     this._combatTimer = 0;
+    this._healMode = false;
 
     /* tutorial */
     this.tut = null;
@@ -122,7 +134,8 @@ class Game {
   _startLevel() {
     this.map = new GameMap(this.floor);
 
-    this.players = spawnParty(this.map.playerSpawns, this.floor, null, this.difficulty);
+    const existing = this.players.length > 0 ? this.players.filter(p => p.alive) : null;
+    this.players = spawnParty(this.map.playerSpawns, this.floor, existing, this.difficulty, this.roster);
     this.enemies = spawnEnemies(this.map.enemySpawns, this.floor, this.difficulty);
 
     this.state = S_IDLE;
@@ -177,26 +190,29 @@ class Game {
       if (btns) {
         const hit = (b) => b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
         if (hit(btns.tutorial)) {
-          SFX.titleMelody(); this.difficulty = 'easy'; this.floor = 0; this._startLevel(); return;
+          SFX.titleMelody(); this.difficulty = 'easy'; this.floor = 0;
+          this.roster = ['LORD','FIGHTER','MAGE','ARCHER']; this._startLevel(); return;
         }
         if (hit(btns.easy)) {
-          SFX.titleMelody(); this.difficulty = 'easy'; this.floor = 1; this._startLevel(); return;
+          SFX.titleMelody(); this.difficulty = 'easy'; this.floor = 1; this._beginDraft(); return;
         }
         if (hit(btns.medium)) {
-          SFX.titleMelody(); this.difficulty = 'medium'; this.floor = 1; this._startLevel(); return;
+          SFX.titleMelody(); this.difficulty = 'medium'; this.floor = 1; this._beginDraft(); return;
         }
         if (hit(btns.hard)) {
-          SFX.titleMelody(); this.difficulty = 'hard'; this.floor = 1; this._startLevel(); return;
+          SFX.titleMelody(); this.difficulty = 'hard'; this.floor = 1; this._beginDraft(); return;
         }
       }
       return;
     }
     if (this.state === S_WIN) {
       if (this.floor >= FINAL_FLOOR) { this.state = S_VICTORY; SFX.victoryMelody(); return; }
-      this._beginTransitionOut(); return;
+      this._beginBonus(); return;
     }
-    if (this.state === S_VICTORY) { this.floor = 0; this.state = S_TITLE; return; }
-    if (this.state === S_LOSE)    { this.floor = 0; this.players = []; this._startLevel(); return; }
+    if (this.state === S_BONUS) { this._clickBonus(px, py); return; }
+    if (this.state === S_DRAFT) { this._clickDraft(px, py); return; }
+    if (this.state === S_VICTORY) { this.floor = 0; this.state = S_TITLE; this.roster = null; return; }
+    if (this.state === S_LOSE)    { this.floor = 0; this.players = []; this.roster = null; this._startLevel(); return; }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
         this.state === S_TRANS_OUT || this.state === S_TRANS_IN) return;
 
@@ -234,8 +250,14 @@ class Game {
 
   /* ── idle ── */
   _clickIdle(cx, cy) {
+    /* clicking a friendly unit selects it */
     const u = this._playerAt(cx, cy);
-    if (u && !u.done) { SFX.select(); this._select(u); }
+    if (u && !u.done) { SFX.select(); this._select(u); return; }
+    /* clicking an enemy shows its threat range */
+    const e = this._enemyAt(cx, cy);
+    if (e) { SFX.select(); this._inspectEnemy(e); return; }
+    /* clicking empty clears any inspection */
+    if (this._inspecting) this._deselect();
   }
 
   /* ── unit selected ── */
@@ -268,10 +290,18 @@ class Game {
     if (opt.action === 'attack') {
       SFX.menuSelect();
       this.state = S_ATK_SELECT;
+      this._healMode = false;
       this.atkRange = this._atkTiles(this.sel);
       this.moveRange = null;
       this.preview = null;
       this._tutShow('atk_mode');
+    } else if (opt.action === 'heal') {
+      SFX.menuSelect();
+      this.state = S_ATK_SELECT;
+      this._healMode = true;
+      this.atkRange = this._atkTiles(this.sel);
+      this.moveRange = null;
+      this.preview = null;
     } else if (opt.action === 'wait') {
       SFX.menuSelect();
       this.sel.acted = true;
@@ -286,8 +316,23 @@ class Game {
     }
   }
 
-  /* ── attack target ── */
+  /* ── attack / heal target ── */
   _clickAtkSelect(cx, cy) {
+    if (this._healMode) {
+      const tgt = this._playerAt(cx, cy);
+      if (!tgt || tgt === this.sel || tgt.hp >= tgt.maxHp || !inRange(this.sel, cx, cy)) {
+        this._showActionMenu(); return;
+      }
+      /* perform heal */
+      const healAmt = this.sel.mag + this.sel.weapon.mt + 10;
+      tgt.hp = Math.min(tgt.maxHp, tgt.hp + healAmt);
+      SFX.hit(); // heal sound
+      this.sel.acted = true;
+      this._healMode = false;
+      this._deselect();
+      this._checkEnd();
+      return;
+    }
     const tgt = this._enemyAt(cx, cy);
     if (!tgt || !inRange(this.sel, cx, cy)) {
       this._showActionMenu();
@@ -403,11 +448,12 @@ class Game {
 
     if (a.mx !== undefined) {
       /* prevent two enemies from occupying the same tile */
-      const occupied = this.enemies.some(e => e !== a.unit && e.alive && e.x === a.mx && e.y === a.my);
-      if (!occupied) {
+      const blocker = this.enemies.find(e => e !== a.unit && e.alive && e.x === a.mx && e.y === a.my)
+                   || this.players.find(p => p.alive && p.x === a.mx && p.y === a.my);
+      if (!blocker) {
         a.unit.x = a.mx; a.unit.y = a.my;
       }
-      /* if occupied, skip the move but still try to attack from current position */
+      /* if blocked, skip the move but still try to attack from current position */
     }
 
     if ((a.type === 'attack' || a.type === 'move_attack') && a.target && a.target.alive) {
@@ -533,6 +579,7 @@ class Game {
 
   /* ═══════════ HELPERS ═══════════ */
   _select(u) {
+    this._inspecting = false;
     this.sel = u;
     this.moveRange = reachable(u, this.map, [...this.players, ...this.enemies]);
     this.atkRange = null;
@@ -543,7 +590,31 @@ class Game {
     if (this.tut && (u.key === 'ARCHER' || u.key === 'MAGE')) this._tutShow('ranged');
   }
 
+  _inspectEnemy(e) {
+    this._inspecting = true;
+    this.sel = e;
+    /* show where the enemy can move */
+    this.moveRange = reachable(e, this.map, [...this.players, ...this.enemies]);
+    /* show all tiles this enemy could attack from any reachable tile */
+    const atkSet = new Set();
+    const [lo, hi] = e.weapon.rng;
+    for (const t of this.moveRange) {
+      for (let r = 0; r < ROWS; r++)
+        for (let cl = 0; cl < COLS; cl++) {
+          const d = Math.abs(t.x - cl) + Math.abs(t.y - r);
+          if (d >= lo && d <= hi) atkSet.add(`${cl},${r}`);
+        }
+    }
+    /* remove tiles already in moveRange so they don't double-highlight */
+    for (const t of this.moveRange) atkSet.delete(`${t.x},${t.y}`);
+    this.atkRange = [...atkSet].map(k => { const [x, y] = k.split(','); return { x: +x, y: +y }; });
+    this.preview = null;
+    /* stay in idle state — this is just an inspection, not a selection */
+    this.state = S_IDLE;
+  }
+
   _deselect() {
+    this._inspecting = false;
     this.sel = null; this.moveRange = null; this.atkRange = null; this.preview = null;
     if (this.state !== S_WIN && this.state !== S_LOSE && this.state !== S_ENEMY_TURN && this.state !== S_COMBAT_ANIM &&
         this.state !== S_TRANS_OUT && this.state !== S_TRANS_IN)
@@ -552,13 +623,25 @@ class Game {
 
   _showActionMenu() {
     const u = this.sel;
-    const targets = this.enemies.filter(e => e.alive && inRange(u, e.x, e.y));
     this.menuPos = { x: u.x, y: u.y };
-    this.menuOpts = [
-      { label: 'ATTACK', action: 'attack', on: targets.length > 0 },
-      { label: 'WAIT',   action: 'wait',   on: true },
-      { label: 'BACK',   action: 'back',   on: true },
-    ];
+
+    if (u.weapon.heal) {
+      /* Staff user — show HEAL instead of ATTACK */
+      const healTargets = this.players.filter(p => p.alive && p !== u && p.hp < p.maxHp && inRange(u, p.x, p.y));
+      this.menuOpts = [
+        { label: 'HEAL', action: 'heal', on: healTargets.length > 0 },
+        { label: 'WAIT', action: 'wait', on: true },
+        { label: 'BACK', action: 'back', on: true },
+      ];
+    } else {
+      const targets = this.enemies.filter(e => e.alive && inRange(u, e.x, e.y));
+      this.menuOpts = [
+        { label: 'ATTACK', action: 'attack', on: targets.length > 0 },
+        { label: 'WAIT',   action: 'wait',   on: true },
+        { label: 'BACK',   action: 'back',   on: true },
+      ];
+    }
+
     this.menuIdx = 0;
     this.state = S_ACTION_MENU;
     this.atkRange = this._atkTiles(u);
@@ -577,6 +660,16 @@ class Game {
   }
 
   _updatePreview(cx, cy) {
+    if (this._healMode) {
+      const tgt = this._playerAt(cx, cy);
+      if (tgt && tgt !== this.sel && tgt.hp < tgt.maxHp && inRange(this.sel, cx, cy)) {
+        const healAmt = Math.min(tgt.maxHp - tgt.hp, this.sel.mag + this.sel.weapon.mt + 10);
+        this.preview = { heal: true, healer: this.sel, target: tgt, amount: healAmt };
+      } else {
+        this.preview = null;
+      }
+      return;
+    }
     const tgt = this._enemyAt(cx, cy);
     if (tgt && inRange(this.sel, cx, cy)) {
       const dt = this.map.at(tgt.x, tgt.y);
@@ -597,6 +690,128 @@ class Game {
 
   _playerAt(x, y) { return this.players.find(u => u.alive && u.x === x && u.y === y); }
   _enemyAt(x, y)  { return this.enemies.find(u => u.alive && u.x === x && u.y === y); }
+
+  /* ═══════════ TEAM DRAFT ═══════════ */
+  _beginDraft() {
+    this._draftPool = [...DRAFT_POOL]; // ['FIGHTER','MAGE','ARCHER','HEALER','CAVALIER','KNIGHT']
+    this._draftPicks = [];
+    this._draftSel = 0;
+    this.state = S_DRAFT;
+  }
+
+  _clickDraft(px, py) {
+    const ren = this.ren;
+    const bounds = ren._draftBounds;
+    if (!bounds) return;
+
+    /* check class card clicks */
+    if (bounds.cards) {
+      for (let i = 0; i < bounds.cards.length; i++) {
+        const b = bounds.cards[i];
+        if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
+          const cls = this._draftPool[i];
+          const idx = this._draftPicks.indexOf(cls);
+          if (idx >= 0) {
+            this._draftPicks.splice(idx, 1);
+            SFX.menuBack();
+          } else if (this._draftPicks.length < 3) {
+            this._draftPicks.push(cls);
+            SFX.select();
+          }
+          return;
+        }
+      }
+    }
+
+    /* check confirm button */
+    if (bounds.confirm && this._draftPicks.length === 3) {
+      const b = bounds.confirm;
+      if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
+        SFX.menuSelect();
+        this.roster = ['LORD', ...this._draftPicks];
+        this._startLevel();
+      }
+    }
+  }
+
+  /* ═══════════ POST-FLOOR BONUS ═══════════ */
+  _beginBonus() {
+    const opts = [];
+
+    /* Option 1: Recruit a new unit (if team < 6) */
+    const aliveCount = this.players.filter(p => p.alive).length;
+    if (aliveCount < 6) {
+      /* pick a random class not already on the team */
+      const onTeam = new Set(this.players.map(p => p.key));
+      const available = DRAFT_POOL.filter(k => !onTeam.has(k));
+      if (available.length > 0) {
+        const cls = available[Math.floor(Math.random() * available.length)];
+        const info = CLASS_INFO[cls];
+        opts.push({ label: 'RECRUIT', desc: `Add a ${info.name} to your team`, action: 'recruit', cls });
+      }
+    }
+
+    /* Option 2: Strengthen — all units gain +1 level of stats */
+    opts.push({ label: 'STRENGTHEN', desc: 'All units gain +1 level of stats', action: 'strengthen' });
+
+    /* Option 3: Heal & Fortify — full heal + DEF boost */
+    opts.push({ label: 'FORTIFY', desc: 'Full heal all units & +2 DEF', action: 'fortify' });
+
+    this._bonusOpts = opts;
+    this._bonusSel = 0;
+    this.state = S_BONUS;
+  }
+
+  _clickBonus(px, py) {
+    const bounds = this.ren._bonusBounds;
+    if (!bounds || !bounds.cards) return;
+
+    for (let i = 0; i < bounds.cards.length; i++) {
+      const b = bounds.cards[i];
+      if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
+        const opt = this._bonusOpts[i];
+        if (!opt) return;
+        SFX.menuSelect();
+
+        if (opt.action === 'recruit') {
+          const spawns = this.map.playerSpawns;
+          const spIdx = this.players.length % spawns.length;
+          const lv = Math.max(1, this.floor);
+          const u = new Unit(opt.cls, spawns[spIdx].x, spawns[spIdx].y, true, lv);
+          this.players.push(u);
+          /* add to roster so they persist across floors */
+          if (this.roster) this.roster.push(opt.cls);
+        } else if (opt.action === 'strengthen') {
+          for (const u of this.players) {
+            if (!u.alive) continue;
+            const ci = CLASS_INFO[u.key];
+            if (!ci) continue;
+            const gr = ci.gr;
+            u.level++;
+            u.maxHp += Math.max(1, Math.floor(gr.hp / 20));
+            u.str   += Math.floor(gr.str / 20);
+            u.mag   += Math.floor(gr.mag / 20);
+            u.skl   += Math.floor(gr.skl / 20);
+            u.spd   += Math.floor(gr.spd / 20);
+            u.lck   += Math.floor(gr.lck / 20);
+            u.def   += Math.floor(gr.def / 20);
+            u.res   += Math.floor(gr.res / 20);
+            u.hp = u.maxHp;
+          }
+        } else if (opt.action === 'fortify') {
+          for (const u of this.players) {
+            if (!u.alive) continue;
+            u.hp = u.maxHp;
+            u.def += 2;
+          }
+        }
+
+        /* proceed to next floor transition */
+        this._beginTransitionOut();
+        return;
+      }
+    }
+  }
 }
 
 /* boot — expose for debug */

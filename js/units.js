@@ -1,4 +1,4 @@
-import { W_SWORD, W_AXE, W_LANCE, W_BOW, W_FIRE, W_THUNDER, W_DARK } from './constants.js';
+import { W_SWORD, W_AXE, W_LANCE, W_BOW, W_FIRE, W_THUNDER, W_DARK, W_STAFF, W_JAVELIN } from './constants.js';
 
 /* ── Class templates ── */
 const CLASSES = {
@@ -7,6 +7,9 @@ const CLASSES = {
   FIGHTER: { name:'Fighter', lbl:'F', hue:'#e06020', w: W_AXE,     base:{hp:30,str:10,mag:0,skl:4,spd:5,lck:3,def:4,res:1,mov:5}, gr:{hp:80,str:60,mag:0,skl:30,spd:30,lck:20,def:20,res:5}  },
   MAGE:    { name:'Mage',    lbl:'M', hue:'#a020e0', w: W_FIRE,    base:{hp:18,str:0,mag:10,skl:6,spd:7,lck:5,def:3,res:8,mov:5}, gr:{hp:40,str:5,mag:65,skl:45,spd:40,lck:25,def:10,res:45} },
   ARCHER:  { name:'Archer',  lbl:'A', hue:'#20a040', w: W_BOW,     base:{hp:22,str:7,mag:0,skl:9,spd:7,lck:5,def:5,res:2,mov:5}, gr:{hp:55,str:40,mag:0,skl:60,spd:40,lck:30,def:20,res:10} },
+  HEALER:  { name:'Healer',  lbl:'H', hue:'#f0f060', w: W_STAFF,   base:{hp:16,str:0,mag:8,skl:5,spd:6,lck:8,def:2,res:10,mov:5}, gr:{hp:35,str:0,mag:55,skl:30,spd:35,lck:40,def:5,res:55} },
+  CAVALIER:{ name:'Cavalier',lbl:'C', hue:'#30b060', w: W_JAVELIN, base:{hp:26,str:8,mag:0,skl:6,spd:6,lck:4,def:7,res:2,mov:7}, gr:{hp:65,str:45,mag:0,skl:35,spd:35,lck:25,def:25,res:10} },
+  KNIGHT:  { name:'Knight',  lbl:'K', hue:'#6080c0', w: W_LANCE,   base:{hp:28,str:9,mag:0,skl:5,spd:3,lck:2,def:12,res:1,mov:4}, gr:{hp:70,str:45,mag:0,skl:25,spd:15,lck:10,def:50,res:5} },
   /* enemy */
   SOLDIER:  { name:'Soldier',  lbl:'S', hue:'#c03030', w: W_LANCE,   base:{hp:22,str:6,mag:0,skl:5,spd:5,lck:3,def:7,res:2,mov:5}, gr:{hp:55,str:35,mag:0,skl:30,spd:30,lck:15,def:30,res:10} },
   BRIGAND:  { name:'Brigand',  lbl:'B', hue:'#904020', w: W_AXE,     base:{hp:28,str:9,mag:0,skl:4,spd:4,lck:2,def:4,res:1,mov:5}, gr:{hp:70,str:55,mag:0,skl:25,spd:25,lck:10,def:20,res:5}  },
@@ -58,6 +61,9 @@ export class Unit {
 /* ── Factory helpers ── */
 const PLAYER_CLASSES = ['LORD','FIGHTER','MAGE','ARCHER'];
 const ENEMY_CLASSES  = ['SOLDIER','BRIGAND','DARK_MAGE','E_ARCHER'];
+/* classes available for draft (Lord always included) */
+export const DRAFT_POOL = ['FIGHTER','MAGE','ARCHER','HEALER','CAVALIER','KNIGHT'];
+export const CLASS_INFO = CLASSES; /* expose for UI descriptions */
 
 /*  Difficulty balance table
     ───────────────────────────────────────────────────────
@@ -68,16 +74,19 @@ const ENEMY_CLASSES  = ['SOLDIER','BRIGAND','DARK_MAGE','E_ARCHER'];
     Enemy cnt │  2 + floor   │  3 + floor   │  3 + floor×1.5
     ───────────────────────────────────────────────────────  */
 
-export function spawnParty(spawns, floor, existing, diff = 'easy') {
+export function spawnParty(spawns, floor, existing, diff = 'easy', roster = null) {
   if (existing && existing.length) {
     existing.forEach((u, i) => {
       const p = spawns[i % spawns.length];
-      u.x = p.x; u.y = p.y; u.reset();
+      u.x = p.x; u.y = p.y;
+      u.hp = u.maxHp; u.alive = true;
+      u.reset();
     });
     return existing;
   }
   const lvBonus = diff === 'easy' ? 1 : 0;
-  return PLAYER_CLASSES.slice(0, Math.min(4, spawns.length))
+  const classes = roster || PLAYER_CLASSES;
+  return classes.slice(0, Math.min(classes.length, spawns.length))
     .map((k, i) => new Unit(k, spawns[i].x, spawns[i].y, true, Math.max(1, floor + lvBonus)));
 }
 
@@ -91,6 +100,9 @@ export function spawnEnemies(spawns, floor, diff = 'easy') {
     const lv = Math.max(1, floor + lvBonus);
     /* tutorial spawns can specify exact class */
     const cls = p.cls || ENEMY_CLASSES[i % ENEMY_CLASSES.length];
-    return new Unit(cls, p.x, p.y, false, lv);
+    const u = new Unit(cls, p.x, p.y, false, lv);
+    /* boss units are always aggressive */
+    if (cls === 'WARLORD') u._ai = 'aggressive';
+    return u;
   });
 }

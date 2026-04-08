@@ -4,9 +4,8 @@
     {
       "name": "dev-server",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "8080"],
-      "port": 8080,
-      "cwd": "C:\\Users\\palti\\git\\trpg-roguelike"
+      "runtimeArgs": ["C:\\Users\\palti\\git\\trpg-roguelike\\server.py"],
+      "port": 8080
     }
   ]
 }
