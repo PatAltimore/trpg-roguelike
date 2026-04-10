@@ -2,7 +2,7 @@
 import http.server, os, pathlib
 
 # Always serve from the project directory
-os.chdir(r'C:\Users\palti\git\trpg-roguelike')
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
