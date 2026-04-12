@@ -47,6 +47,7 @@ export class Renderer {
     }
 
     this._highlights(g);
+    this._droppedItems(g);
     this._units(g);
 
     this._cursor(g);
@@ -355,6 +356,27 @@ export class Renderer {
     if (g.atkRange)  for (const p of g.atkRange)  { c.fillStyle = C.ATK_HL;  c.fillRect(p.x*TILE, p.y*TILE, TILE, TILE); }
   }
 
+  /* ═══════════ DROPPED ITEMS ═══════════ */
+  _droppedItems(g) {
+    if (!g.droppedItems || !g.droppedItems.length) return;
+    const c = this.cx;
+    for (const d of g.droppedItems) {
+      const x = d.x * TILE, y = d.y * TILE;
+      /* pulsing glow */
+      const pulse = 0.5 + Math.sin(this.t * 0.1 + d.x + d.y) * 0.3;
+      c.fillStyle = `rgba(255,215,0,${pulse * 0.3})`;
+      c.fillRect(x + 4, y + 4, TILE - 8, TILE - 8);
+      /* chest/bag icon */
+      c.fillStyle = `rgba(200,160,40,${pulse + 0.2})`;
+      c.fillRect(x + 12, y + 14, 16, 12);
+      c.fillStyle = `rgba(255,215,0,${pulse + 0.2})`;
+      c.fillRect(x + 14, y + 12, 12, 4);
+      /* latch */
+      c.fillStyle = '#fff';
+      c.fillRect(x + 18, y + 18, 4, 4);
+    }
+  }
+
   /* ═══════════ UNITS ═══════════ */
   _units(g) {
     for (const u of [...g.players, ...g.enemies]) if (u.alive) this._unit(u, g);
@@ -424,7 +446,7 @@ export class Renderer {
 
   _helm(k) {
     return { LORD:'#c0a000', FIGHTER:'#808080', MAGE:'#a000c0', ARCHER:'#206040',
-             HEALER:'#e0e040', CAVALIER:'#208040', KNIGHT:'#4060a0',
+             HEALER:'#e0e040', CAVALIER:'#208040', KNIGHT:'#4060a0', THIEF:'#606020',
              SOLDIER:'#804040', BRIGAND:'#604020', DARK_MAGE:'#300060', E_ARCHER:'#604040',
              WARLORD:'#ff0000' }[k] || '#888';
   }
@@ -488,9 +510,10 @@ export class Renderer {
     /* store sidebar content bottom for action menu positioning */
     this._sidebarContentY = y;
 
-    /* combat / heal preview */
+    /* combat / heal / steal preview */
     if (g.preview) {
       if (g.preview.heal) { this._healPreview(g.preview, sx, y, sw); y += 80; }
+      else if (g.preview.steal) { this._stealPreview(g.preview, sx, y, sw); y += 80; }
       else { this._combatPreview(g.preview, sx, y, sw); y += 128; }
     }
 
@@ -508,10 +531,12 @@ export class Renderer {
 
   _unitPanel(u, x, y, w) {
     const c = this.cx;
+    const invCount = u.inventory ? u.inventory.length : 0;
+    const panelH = 178 + (invCount > 0 ? 14 + invCount * 12 : 0);
     c.fillStyle = u.isPlayer ? '#1a1a50' : '#501a1a';
-    c.fillRect(x-4, y, w+8, 178);
+    c.fillRect(x-4, y, w+8, panelH);
     c.strokeStyle = u.isPlayer ? '#3030a0' : '#a03030';
-    c.lineWidth = 1; c.strokeRect(x-4, y, w+8, 178);
+    c.lineWidth = 1; c.strokeRect(x-4, y, w+8, panelH);
 
     y += 12;
     c.fillStyle = C.GOLD; c.font = `9px ${FONT}`; c.textAlign = 'left';
@@ -536,7 +561,21 @@ export class Renderer {
       c.fillStyle = '#6060a0'; c.fillText(stats[i][0], sx, sy);
       c.fillStyle = C.TXT;     c.fillText(String(stats[i][1]).padStart(2), sx + 38, sy);
     }
-    return y + 72;
+    y += 72;
+
+    /* inventory */
+    if (invCount > 0) {
+      c.fillStyle = '#6060a0'; c.font = `6px ${FONT}`;
+      c.fillText('ITEMS', x, y); y += 10;
+      c.font = `6px ${FONT}`;
+      for (const item of u.inventory) {
+        c.fillStyle = item.type === 'weapon' ? '#80b0ff' : '#80ff80';
+        c.fillText('\u2022 ' + item.name, x + 4, y);
+        y += 12;
+      }
+    }
+
+    return y + 4;
   }
 
   _terrainPanel(g, x, y, w) {
@@ -901,6 +940,24 @@ export class Renderer {
     c.fillText(`+${pv.amount} HP`, x, y + 62);
   }
 
+  /* ═══════════ STEAL PREVIEW ═══════════ */
+  _stealPreview(pv, sx, y, sw) {
+    const c = this.cx, x = sx + 10, w = sw - 20;
+    c.fillStyle = '#1a1a0d'; c.fillRect(x - 4, y, w + 8, 70);
+    c.strokeStyle = '#c0a020'; c.lineWidth = 2; c.strokeRect(x - 4, y, w + 8, 70);
+
+    c.fillStyle = '#ffd740'; c.font = `8px ${FONT}`; c.textAlign = 'center';
+    c.fillText('STEAL PREVIEW', sx + sw / 2, y + 14);
+
+    c.textAlign = 'left'; c.font = `7px ${FONT}`;
+    c.fillStyle = '#ff8080';
+    c.fillText(pv.target.name, x, y + 32);
+    c.fillStyle = C.TXT;
+    c.fillText(`Item: ${pv.item.name}`, x, y + 48);
+    c.fillStyle = '#ffd740';
+    c.fillText(`${pv.chance}% chance`, x, y + 62);
+  }
+
   /* ═══════════ DRAFT SCREEN ═══════════ */
   _draftScreen(g) {
     const c = this.cx;
@@ -925,11 +982,11 @@ export class Renderer {
     c.fillStyle = C.GOLD; c.font = `9px ${FONT}`; c.textAlign = 'center';
     c.fillText(`\u2605 ${lordInfo.name} - ${lordInfo.w.name}`, mx, lordY + 22);
 
-    /* class cards — 3 columns x 2 rows */
+    /* class cards — 4 columns, wrapping */
     const pool = g._draftPool;
     const picks = g._draftPicks;
-    const cardW = 300, cardH = 140, gap = 16;
-    const cols = 3, rows = 2;
+    const cardW = 230, cardH = 140, gap = 12;
+    const cols = 4, rows = Math.ceil(pool.length / cols);
     const gridW = cols * cardW + (cols - 1) * gap;
     const startX = (CANVAS_W - gridW) / 2;
     const startY = 126;
@@ -969,13 +1026,13 @@ export class Renderer {
         ['HP', b.hp], ['STR', b.str], ['MAG', b.mag], ['SKL', b.skl],
         ['SPD', b.spd], ['DEF', b.def], ['RES', b.res], ['MOV', b.mov],
       ];
-      c.font = `7px ${FONT}`;
+      c.font = `6px ${FONT}`;
       for (let s = 0; s < stats.length; s++) {
         const scol = s % 4, srow = Math.floor(s / 4);
-        const sx = cx + 14 + scol * 70;
-        const sy = cy + 52 + srow * 18;
+        const sx = cx + 14 + scol * 52;
+        const sy = cy + 50 + srow * 14;
         c.fillStyle = '#6060a0'; c.fillText(stats[s][0], sx, sy);
-        c.fillStyle = '#d0d0d0'; c.fillText(String(stats[s][1]).padStart(2), sx + 30, sy);
+        c.fillStyle = '#d0d0d0'; c.fillText(String(stats[s][1]).padStart(2), sx + 24, sy);
       }
 
       /* growth hint */
@@ -985,7 +1042,7 @@ export class Renderer {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)
         .map(([k]) => k.toUpperCase());
-      c.fillText('Best: ' + topGrowths.join(', '), cx + 14, cy + 98);
+      c.fillText('Best: ' + topGrowths.join(', '), cx + 14, cy + 90);
 
       /* description */
       const descs = {
@@ -995,9 +1052,10 @@ export class Renderer {
         HEALER: 'Heals allies. Low combat stats.',
         CAVALIER: 'High MOV. Balanced melee/ranged.',
         KNIGHT: 'Massive DEF, low SPD. A wall.',
+        THIEF: 'Fast & lucky. Can steal enemy items.',
       };
       c.fillStyle = '#707080'; c.font = `6px ${FONT}`;
-      c.fillText(descs[cls] || '', cx + 14, cy + 114);
+      c.fillText(descs[cls] || '', cx + 14, cy + 106);
 
       /* selection checkmark */
       if (selected) {

@@ -32,6 +32,33 @@ export const TRI = { sword: { strong: 'axe', weak: 'lance' },
 export const TRI_HIT = 15;
 export const TRI_DMG = 1;
 
+/* ── Items ── */
+export const ITEMS = {
+  POTION:       { name: 'Potion',       type: 'consumable', effect: 'heal_full',  desc: 'Restores all HP' },
+  VULNERARY:    { name: 'Vulnerary',    type: 'consumable', effect: 'heal_half',  desc: 'Restores 50% HP' },
+  STRENGTH_TOME:{ name: 'Str Tonic',    type: 'consumable', effect: 'str_boost',  desc: '+3 STR this floor' },
+  SPEED_TOME:   { name: 'Spd Tonic',    type: 'consumable', effect: 'spd_boost',  desc: '+3 SPD this floor' },
+  SHIELD:       { name: 'Shield',       type: 'consumable', effect: 'def_boost',  desc: '+3 DEF this floor' },
+};
+
+/* Weapons that can drop as items (equippable) */
+export const WEAPON_ITEMS = {
+  IRON_SWORD:  { name: 'Iron Sword',  type: 'weapon', weapon: 'W_SWORD' },
+  IRON_AXE:    { name: 'Iron Axe',    type: 'weapon', weapon: 'W_AXE' },
+  IRON_LANCE:  { name: 'Iron Lance',  type: 'weapon', weapon: 'W_LANCE' },
+  IRON_BOW:    { name: 'Iron Bow',    type: 'weapon', weapon: 'W_BOW' },
+  FIRE_TOME:   { name: 'Fire Tome',   type: 'weapon', weapon: 'W_FIRE' },
+  JAVELIN_ITEM:{ name: 'Javelin',     type: 'weapon', weapon: 'W_JAVELIN' },
+};
+
+/* map weapon item keys to actual weapon objects */
+export const WEAPON_MAP = {
+  W_SWORD: W_SWORD, W_AXE: W_AXE, W_LANCE: W_LANCE,
+  W_BOW: W_BOW, W_FIRE: W_FIRE, W_JAVELIN: W_JAVELIN,
+};
+
+export const MAX_INVENTORY = 4;
+
 /* ── Game states ── */
 export const S_TITLE        = 0;
 export const S_IDLE         = 1;

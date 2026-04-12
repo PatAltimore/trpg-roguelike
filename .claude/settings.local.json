@@ -11,7 +11,10 @@
       "Bash(git pull:*)",
       "Bash(gh run:*)",
       "Bash(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/)",
-      "Bash(where python:*)"
+      "Bash(where python:*)",
+      "Bash(netstat -ano)",
+      "Bash(findstr :8080)",
+      "Bash(taskkill /PID 29196 /F)"
     ]
   }
 }

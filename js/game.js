@@ -3,6 +3,7 @@ import {
   S_TITLE, S_IDLE, S_UNIT_SEL, S_ACTION_MENU, S_ATK_SELECT,
   S_COMBAT_ANIM, S_ENEMY_TURN, S_WIN, S_LOSE,
   S_TRANS_OUT, S_TRANS_IN, S_VICTORY, S_DRAFT, S_BONUS, FINAL_FLOOR,
+  ITEMS, MAX_INVENTORY,
 } from './constants.js';
 import { GameMap, reachable }    from './map.js';
 import { spawnParty, spawnEnemies, DRAFT_POOL, CLASS_INFO, Unit } from './units.js';
@@ -27,6 +28,9 @@ const TUT = {
   end_turn:  'All units done? Click END TURN on the right.',
   enemy_go:  'Enemy phase! They follow the same combat rules.',
   ranged:    'Archers: range 2. Mages: range 1-2. Use them wisely!',
+  items:     'Each unit has a Potion! Use ITEM to heal in battle.',
+  item_drop: 'Enemies drop loot! Move onto it to pick it up.',
+  pickup:    'Item picked up! Open ITEM in the action menu to use it.',
 };
 
 class Game {
@@ -73,12 +77,17 @@ class Game {
     this._eIdx     = 0;
     this._eTimer   = 0;
 
+    /* dropped items on map */
+    this.droppedItems = [];  // [{item, x, y}]
+
     /* combat animation */
     this._combatLog = [];
     this._combatIdx = 0;
     this._enemyCombatPending = false;
     this._combatTimer = 0;
     this._healMode = false;
+    this._stealMode = false;
+    this._itemMenu = null;  // { items: [...], sel: 0 } when open
 
     /* tutorial */
     this.tut = null;
@@ -138,6 +147,7 @@ class Game {
     this.players = spawnParty(this.map.playerSpawns, this.floor, existing, this.difficulty, this.roster);
     this.enemies = spawnEnemies(this.map.enemySpawns, this.floor, this.difficulty);
 
+    this.droppedItems = [];
     this.state = S_IDLE;
     this.phase = 'player';
     this.turn  = 1;
@@ -273,6 +283,8 @@ class Game {
     this._prevPos = { x: this.sel.x, y: this.sel.y };
     this.sel.x = cx; this.sel.y = cy; this.sel.moved = true;
     SFX.move();
+    /* auto-pickup dropped items */
+    this._pickupItems(this.sel);
     this._showActionMenu();
     this._tutShow('moved');
   }
@@ -291,6 +303,7 @@ class Game {
       SFX.menuSelect();
       this.state = S_ATK_SELECT;
       this._healMode = false;
+      this._stealMode = false;
       this.atkRange = this._atkTiles(this.sel);
       this.moveRange = null;
       this.preview = null;
@@ -302,6 +315,31 @@ class Game {
       this.atkRange = this._atkTiles(this.sel);
       this.moveRange = null;
       this.preview = null;
+    } else if (opt.action === 'steal') {
+      SFX.menuSelect();
+      this.state = S_ATK_SELECT;
+      this._stealMode = true;
+      this._healMode = false;
+      this.atkRange = this._atkTiles(this.sel);
+      this.moveRange = null;
+      this.preview = null;
+    } else if (opt.action === 'item') {
+      SFX.menuSelect();
+      this._openItemMenu();
+    } else if (opt.action === 'use_item') {
+      SFX.menuSelect();
+      const im = this._itemMenu;
+      if (im && im.items[opt.idx]) {
+        this._useItem(im.items[opt.idx], im.unit);
+        im.unit.acted = true;
+        this._itemMenu = null;
+        this._deselect();
+        this._checkEnd();
+      }
+    } else if (opt.action === 'item_back') {
+      SFX.menuBack();
+      this._itemMenu = null;
+      this._showActionMenu();
     } else if (opt.action === 'wait') {
       SFX.menuSelect();
       this.sel.acted = true;
@@ -316,19 +354,39 @@ class Game {
     }
   }
 
-  /* ── attack / heal target ── */
+  /* ── attack / heal / steal target ── */
   _clickAtkSelect(cx, cy) {
     if (this._healMode) {
       const tgt = this._playerAt(cx, cy);
       if (!tgt || tgt === this.sel || tgt.hp >= tgt.maxHp || !inRange(this.sel, cx, cy)) {
         this._showActionMenu(); return;
       }
-      /* perform heal */
       const healAmt = this.sel.mag + this.sel.weapon.mt + 10;
       tgt.hp = Math.min(tgt.maxHp, tgt.hp + healAmt);
-      SFX.hit(); // heal sound
+      SFX.hit();
       this.sel.acted = true;
       this._healMode = false;
+      this._deselect();
+      this._checkEnd();
+      return;
+    }
+    if (this._stealMode) {
+      const tgt = this._enemyAt(cx, cy);
+      if (!tgt || !inRange(this.sel, cx, cy) || tgt.inventory.length === 0) {
+        this._showActionMenu(); return;
+      }
+      /* steal: SPD check — succeed if thief faster, else 50% + (spd diff * 5)% */
+      const spdDiff = this.sel.spd - tgt.spd;
+      const chance = Math.min(100, Math.max(20, 50 + spdDiff * 5));
+      if (Math.random() * 100 < chance && this.sel.inventory.length < MAX_INVENTORY) {
+        const stolen = tgt.inventory.splice(0, 1)[0];
+        this.sel.inventory.push(stolen);
+        SFX.hit();
+      } else {
+        SFX.miss();
+      }
+      this.sel.acted = true;
+      this._stealMode = false;
       this._deselect();
       this._checkEnd();
       return;
@@ -395,12 +453,24 @@ class Game {
       if (this.sel) this.sel.acted = true;
       const hadEnemies = this.enemies.length;
       const hadPlayers = this.players.length;
+      /* drop items from dead units */
+      let itemsDropped = false;
+      for (const u of [...this.enemies, ...this.players]) {
+        if (!u.alive && u.inventory.length > 0) {
+          for (const item of u.inventory) {
+            this.droppedItems.push({ item: { ...item }, x: u.x, y: u.y });
+          }
+          u.inventory = [];
+          itemsDropped = true;
+        }
+      }
       this.enemies = this.enemies.filter(e => e.alive);
       this.players = this.players.filter(p => p.alive);
       /* sound for kills */
       if (this.enemies.length < hadEnemies || this.players.length < hadPlayers) SFX.kill();
-      /* tutorial: first kill tip */
+      /* tutorial tips */
       if (this.tut && this.enemies.length < hadEnemies) this._tutShow('first_kill');
+      if (this.tut && itemsDropped) this._tutShow('item_drop');
 
       if (this._enemyCombatPending) {
         /* resume enemy turn after enemy-initiated combat */
@@ -624,28 +694,36 @@ class Game {
   _showActionMenu() {
     const u = this.sel;
     this.menuPos = { x: u.x, y: u.y };
+    const opts = [];
 
     if (u.weapon.heal) {
-      /* Staff user — show HEAL instead of ATTACK */
       const healTargets = this.players.filter(p => p.alive && p !== u && p.hp < p.maxHp && inRange(u, p.x, p.y));
-      this.menuOpts = [
-        { label: 'HEAL', action: 'heal', on: healTargets.length > 0 },
-        { label: 'WAIT', action: 'wait', on: true },
-        { label: 'BACK', action: 'back', on: true },
-      ];
+      opts.push({ label: 'HEAL', action: 'heal', on: healTargets.length > 0 });
     } else {
       const targets = this.enemies.filter(e => e.alive && inRange(u, e.x, e.y));
-      this.menuOpts = [
-        { label: 'ATTACK', action: 'attack', on: targets.length > 0 },
-        { label: 'WAIT',   action: 'wait',   on: true },
-        { label: 'BACK',   action: 'back',   on: true },
-      ];
+      opts.push({ label: 'ATTACK', action: 'attack', on: targets.length > 0 });
     }
 
+    /* STEAL — Thief-only, targets adjacent enemies with items */
+    if (u.canSteal) {
+      const stealTargets = this.enemies.filter(e => e.alive && e.inventory.length > 0 && inRange(u, e.x, e.y));
+      opts.push({ label: 'STEAL', action: 'steal', on: stealTargets.length > 0 });
+    }
+
+    /* ITEM — use a consumable from inventory */
+    const hasUsable = u.inventory.some(it => it.type === 'consumable');
+    opts.push({ label: 'ITEM', action: 'item', on: hasUsable });
+
+    opts.push({ label: 'WAIT', action: 'wait', on: true });
+    opts.push({ label: 'BACK', action: 'back', on: true });
+
+    this.menuOpts = opts;
     this.menuIdx = 0;
     this.state = S_ACTION_MENU;
     this.atkRange = this._atkTiles(u);
     SFX.menuOpen();
+    /* tutorial: mention items on first action menu */
+    if (hasUsable) this._tutShow('items');
   }
 
   _atkTiles(u) {
@@ -665,6 +743,17 @@ class Game {
       if (tgt && tgt !== this.sel && tgt.hp < tgt.maxHp && inRange(this.sel, cx, cy)) {
         const healAmt = Math.min(tgt.maxHp - tgt.hp, this.sel.mag + this.sel.weapon.mt + 10);
         this.preview = { heal: true, healer: this.sel, target: tgt, amount: healAmt };
+      } else {
+        this.preview = null;
+      }
+      return;
+    }
+    if (this._stealMode) {
+      const tgt = this._enemyAt(cx, cy);
+      if (tgt && inRange(this.sel, cx, cy) && tgt.inventory.length > 0) {
+        const spdDiff = this.sel.spd - tgt.spd;
+        const chance = Math.min(100, Math.max(20, 50 + spdDiff * 5));
+        this.preview = { steal: true, thief: this.sel, target: tgt, item: tgt.inventory[0], chance };
       } else {
         this.preview = null;
       }
@@ -690,6 +779,53 @@ class Game {
 
   _playerAt(x, y) { return this.players.find(u => u.alive && u.x === x && u.y === y); }
   _enemyAt(x, y)  { return this.enemies.find(u => u.alive && u.x === x && u.y === y); }
+
+  /* ═══════════ INVENTORY ═══════════ */
+  _pickupItems(u) {
+    const toRemove = [];
+    for (let i = 0; i < this.droppedItems.length; i++) {
+      const d = this.droppedItems[i];
+      if (d.x === u.x && d.y === u.y && u.inventory.length < MAX_INVENTORY) {
+        u.inventory.push(d.item);
+        toRemove.push(i);
+        SFX.select();
+      }
+    }
+    if (toRemove.length > 0) this._tutShow('pickup');
+    for (let i = toRemove.length - 1; i >= 0; i--) this.droppedItems.splice(toRemove[i], 1);
+  }
+
+  _openItemMenu() {
+    const u = this.sel;
+    const usable = u.inventory.filter(it => it.type === 'consumable');
+    this._itemMenu = { items: usable, sel: 0, unit: u };
+    /* build menu opts from items */
+    this.menuOpts = [
+      ...usable.map((it, i) => ({ label: it.name, action: 'use_item', idx: i, on: true })),
+      { label: 'BACK', action: 'item_back', on: true },
+    ];
+    this.menuIdx = 0;
+    this.state = S_ACTION_MENU;
+  }
+
+  _useItem(item, u) {
+    switch (item.effect) {
+      case 'heal_full':
+        u.hp = u.maxHp; break;
+      case 'heal_half':
+        u.hp = Math.min(u.maxHp, u.hp + Math.floor(u.maxHp / 2)); break;
+      case 'str_boost':
+        u.str += 3; break;
+      case 'spd_boost':
+        u.spd += 3; break;
+      case 'def_boost':
+        u.def += 3; break;
+    }
+    /* remove from inventory */
+    const idx = u.inventory.indexOf(item);
+    if (idx >= 0) u.inventory.splice(idx, 1);
+    SFX.hit();
+  }
 
   /* ═══════════ TEAM DRAFT ═══════════ */
   _beginDraft() {

@@ -1,4 +1,7 @@
-import { W_SWORD, W_AXE, W_LANCE, W_BOW, W_FIRE, W_THUNDER, W_DARK, W_STAFF, W_JAVELIN } from './constants.js';
+import { W_SWORD, W_AXE, W_LANCE, W_BOW, W_FIRE, W_THUNDER, W_DARK, W_STAFF, W_JAVELIN,
+         ITEMS, MAX_INVENTORY } from './constants.js';
+
+export const W_DAGGER = { name: 'Dagger', mt: 3, hit: 95, rng: [1,1], magic: false, tri: 'sword' };
 
 /* ── Class templates ── */
 const CLASSES = {
@@ -10,6 +13,7 @@ const CLASSES = {
   HEALER:  { name:'Healer',  lbl:'H', hue:'#f0f060', w: W_STAFF,   base:{hp:16,str:0,mag:8,skl:5,spd:6,lck:8,def:2,res:10,mov:5}, gr:{hp:35,str:0,mag:55,skl:30,spd:35,lck:40,def:5,res:55} },
   CAVALIER:{ name:'Cavalier',lbl:'C', hue:'#30b060', w: W_JAVELIN, base:{hp:26,str:8,mag:0,skl:6,spd:6,lck:4,def:7,res:2,mov:7}, gr:{hp:65,str:45,mag:0,skl:35,spd:35,lck:25,def:25,res:10} },
   KNIGHT:  { name:'Knight',  lbl:'K', hue:'#6080c0', w: W_LANCE,   base:{hp:28,str:9,mag:0,skl:5,spd:3,lck:2,def:12,res:1,mov:4}, gr:{hp:70,str:45,mag:0,skl:25,spd:15,lck:10,def:50,res:5} },
+  THIEF:   { name:'Thief',  lbl:'T', hue:'#808040', w: W_DAGGER,  base:{hp:20,str:5,mag:0,skl:10,spd:12,lck:10,def:3,res:4,mov:7}, gr:{hp:45,str:30,mag:0,skl:55,spd:60,lck:50,def:10,res:15}, canSteal: true },
   /* enemy */
   SOLDIER:  { name:'Soldier',  lbl:'S', hue:'#c03030', w: W_LANCE,   base:{hp:22,str:6,mag:0,skl:5,spd:5,lck:3,def:7,res:2,mov:5}, gr:{hp:55,str:35,mag:0,skl:30,spd:30,lck:15,def:30,res:10} },
   BRIGAND:  { name:'Brigand',  lbl:'B', hue:'#904020', w: W_AXE,     base:{hp:28,str:9,mag:0,skl:4,spd:4,lck:2,def:4,res:1,mov:5}, gr:{hp:70,str:55,mag:0,skl:25,spd:25,lck:10,def:20,res:5}  },
@@ -34,6 +38,8 @@ export class Unit {
     this.x = x;  this.y = y;
     this.level = level;
     this.moved = false;  this.acted = false;  this.alive = true;
+    this.inventory = [];
+    this.canSteal = !!c.canSteal;
 
     const b = c.base, gr = c.gr, lv = level - 1;
     /* growth scaled for a short 5-floor journey (divide by 20 instead of 100) */
@@ -62,7 +68,7 @@ export class Unit {
 const PLAYER_CLASSES = ['LORD','FIGHTER','MAGE','ARCHER'];
 const ENEMY_CLASSES  = ['SOLDIER','BRIGAND','DARK_MAGE','E_ARCHER'];
 /* classes available for draft (Lord always included) */
-export const DRAFT_POOL = ['FIGHTER','MAGE','ARCHER','HEALER','CAVALIER','KNIGHT'];
+export const DRAFT_POOL = ['FIGHTER','MAGE','ARCHER','HEALER','CAVALIER','KNIGHT','THIEF'];
 export const CLASS_INFO = CLASSES; /* expose for UI descriptions */
 
 /*  Difficulty balance table
@@ -87,7 +93,11 @@ export function spawnParty(spawns, floor, existing, diff = 'easy', roster = null
   const lvBonus = diff === 'easy' ? 1 : 0;
   const classes = roster || PLAYER_CLASSES;
   return classes.slice(0, Math.min(classes.length, spawns.length))
-    .map((k, i) => new Unit(k, spawns[i].x, spawns[i].y, true, Math.max(1, floor + lvBonus)));
+    .map((k, i) => {
+      const u = new Unit(k, spawns[i].x, spawns[i].y, true, Math.max(1, floor + lvBonus));
+      u.inventory.push({ ...ITEMS.POTION });
+      return u;
+    });
 }
 
 export function spawnEnemies(spawns, floor, diff = 'easy') {
@@ -103,6 +113,14 @@ export function spawnEnemies(spawns, floor, diff = 'easy') {
     const u = new Unit(cls, p.x, p.y, false, lv);
     /* boss units are always aggressive */
     if (cls === 'WARLORD') u._ai = 'aggressive';
+    /* tutorial: first enemy always carries a Vulnerary to teach drops */
+    if (floor === 0 && i === 0) {
+      u.inventory.push({ ...ITEMS.VULNERARY });
+    } else if (Math.random() < 0.4) {
+      /* ~40% chance to carry a droppable item */
+      const pool = [ITEMS.POTION, ITEMS.VULNERARY, ITEMS.STRENGTH_TOME, ITEMS.SPEED_TOME, ITEMS.SHIELD];
+      u.inventory.push({ ...pool[Math.floor(Math.random() * pool.length)] });
+    }
     return u;
   });
 }
