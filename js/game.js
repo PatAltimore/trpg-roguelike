@@ -222,7 +222,7 @@ class Game {
     if (this.state === S_BONUS) { this._clickBonus(px, py); return; }
     if (this.state === S_DRAFT) { this._clickDraft(px, py); return; }
     if (this.state === S_VICTORY) { this.floor = 0; this.state = S_TITLE; this.roster = null; return; }
-    if (this.state === S_LOSE)    { this.floor = 0; this.players = []; this.roster = null; this._startLevel(); return; }
+    if (this.state === S_LOSE)    { this.floor = 0; this.players = []; this.roster = null; this.state = S_TITLE; return; }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
         this.state === S_TRANS_OUT || this.state === S_TRANS_IN) return;
 
@@ -439,9 +439,10 @@ class Game {
 
   _stepCombatAnim() {
     this._combatTimer++;
-    /* play sound at the start of each strike */
+    /* apply damage + play sound at the start of each strike */
     if (this._combatTimer === 1 && this._combatIdx < this._combatLog.length) {
       const entry = this._combatLog[this._combatIdx];
+      if (entry.dmg > 0) entry.tgt.takeDmg(entry.dmg);
       if (!entry.hit) SFX.miss();
       else if (entry.crit) SFX.crit();
       else SFX.hit();

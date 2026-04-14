@@ -34,23 +34,24 @@ export function inRange(unit, tx, ty) {
   return d >= unit.weapon.rng[0] && d <= unit.weapon.rng[1];
 }
 
-/* run one side's attack (possibly x2) */
-function strike(atk, def, terrain, log) {
+/* run one side's attack (possibly x2) — damage is RECORDED, not applied */
+function strike(atk, def, terrain, log, simHp) {
   const f = forecast(atk, def, terrain);
   const doOne = () => {
     const hit  = Math.random() * 100 < f.hit;
     const crit = hit && Math.random() * 100 < f.crit;
     const d    = hit ? (crit ? f.dmg * 3 : f.dmg) : 0;
-    if (d) def.takeDmg(d);
+    simHp[def.id] = Math.max(0, (simHp[def.id] ?? def.hp) - d);
     log.push({ src: atk, tgt: def, dmg: d, hit, crit });
   };
   doOne();
-  if (f.doubles && def.alive) doOne();
+  if (f.doubles && (simHp[def.id] > 0)) doOne();
 }
 
 export function resolve(atk, def, atkTerrain, defTerrain) {
   const log = [];
-  strike(atk, def, defTerrain, log);
-  if (def.alive && canCounter(atk, def)) strike(def, atk, atkTerrain, log);
+  const simHp = { [atk.id]: atk.hp, [def.id]: def.hp };
+  strike(atk, def, defTerrain, log, simHp);
+  if (simHp[def.id] > 0 && canCounter(atk, def)) strike(def, atk, atkTerrain, log, simHp);
   return log;
 }
