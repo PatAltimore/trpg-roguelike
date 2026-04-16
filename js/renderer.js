@@ -54,6 +54,7 @@ export class Renderer {
     this._sidebar(g);
     if (g.state === S_ACTION_MENU) this._menu(g);
     if (g.state === S_ATK_SELECT) this._atkPrompt();
+    if (g.state === S_COMBAT_ANIM && g._enemyCombatPending) this._enemyAtkBanner();
     this._tutBanner(g);
     if (g.state === S_WIN || g.state === S_LOSE) this._overlay(g);
   }
@@ -414,6 +415,23 @@ export class Renderer {
       c.strokeRect(x+4-p, y+0-p, 32+p*2, 34+p*2);
     }
 
+    /* combat target flash — pulsing red overlay on the defender */
+    if (g.state === S_COMBAT_ANIM && g._combatDef === u) {
+      const pulse = 0.3 + Math.sin(this.t * 0.3) * 0.25;
+      c.fillStyle = `rgba(255,60,60,${pulse})`;
+      c.fillRect(x+6, y+2, 28, 30);
+      /* red crosshair on target */
+      c.strokeStyle = `rgba(255,100,100,${0.6 + Math.sin(this.t * 0.2) * 0.4})`;
+      c.lineWidth = 2;
+      const cx2 = x + T/2, cy2 = y + T/2, s = 14 + Math.sin(this.t * 0.15) * 2;
+      c.beginPath();
+      c.moveTo(cx2 - s, cy2); c.lineTo(cx2 - s + 6, cy2);
+      c.moveTo(cx2 + s, cy2); c.lineTo(cx2 + s - 6, cy2);
+      c.moveTo(cx2, cy2 - s); c.lineTo(cx2, cy2 - s + 6);
+      c.moveTo(cx2, cy2 + s); c.lineTo(cx2, cy2 + s - 6);
+      c.stroke();
+    }
+
     /* attack target indicator — pulsing crosshair on targetable enemies */
     if (g.state === S_ATK_SELECT && !u.isPlayer && g.sel && inRange(g.sel, u.x, u.y)) {
       const pulse = 0.6 + Math.sin(this.t * 0.2) * 0.4;
@@ -478,7 +496,7 @@ export class Renderer {
     c.fillStyle = C.GOLD; c.font = `10px ${FONT}`;
     const floorLabel = g.floor === 0 ? 'TUTORIAL'
                      : g.floor >= FINAL_FLOOR ? 'FINAL BATTLE'
-                     : `FLOOR ${g.floor}`;
+                     : `LEVEL ${g.floor}`;
     c.fillText(floorLabel, px, y); y += 20;
     /* floor theme + difficulty subtitle */
     if (g.map && g.map._floorTheme) {
@@ -736,6 +754,21 @@ export class Renderer {
     c.fillText('\u2694 Click a target to attack  \u2022  Click empty tile to cancel', mapW / 2, mapH - 12);
   }
 
+  _enemyAtkBanner() {
+    const c = this.cx;
+    const mapW = COLS * TILE;
+    const pulse = 0.7 + Math.sin(this.t * 0.12) * 0.3;
+    c.fillStyle = `rgba(80,0,0,${0.9 * pulse})`;
+    c.fillRect(0, 0, mapW, 32);
+    c.strokeStyle = `rgba(255,60,60,${0.8 * pulse})`;
+    c.lineWidth = 1;
+    c.strokeRect(0, 0, mapW, 32);
+    c.fillStyle = `rgba(255,180,180,${pulse})`;
+    c.font = `9px ${FONT}`;
+    c.textAlign = 'center';
+    c.fillText('\u2694 Enemy attacks!', mapW / 2, 20);
+  }
+
   _transOverlay(g) {
     const c = this.cx;
     const tr = g.trans;
@@ -778,7 +811,7 @@ export class Renderer {
     if (tr.dir === 'out') {
       c.fillText('MARCHING ONWARD...', mx, CANVAS_H / 2 + 5);
     } else {
-      c.fillText(g.floor === 0 ? 'TUTORIAL' : `FLOOR ${g.floor}`, mx, CANVAS_H / 2 + 5);
+      c.fillText(g.floor === 0 ? 'TUTORIAL' : `LEVEL ${g.floor}`, mx, CANVAS_H / 2 + 5);
     }
   }
 
@@ -797,7 +830,7 @@ export class Renderer {
       c.fillStyle = C.TXT;  c.font = `10px ${FONT}`;
       const sub = g.floor === 0 ? 'You learned the basics!'
                 : g.floor >= FINAL_FLOOR ? 'The darkness has been vanquished!'
-                : `Floor ${g.floor} cleared!`;
+                : `Level ${g.floor} cleared!`;
       c.fillText(sub, mx, my + 10);
       c.fillText('Click to continue...', mx, my + 40);
     } else {
@@ -912,7 +945,7 @@ export class Renderer {
     /* stats */
     c.fillStyle = '#8080c0';
     c.font = `8px ${FONT}`;
-    c.fillText(`Floors conquered: ${FINAL_FLOOR}`, mx, 190);
+    c.fillText(`Levels conquered: ${FINAL_FLOOR}`, mx, 190);
 
     /* prompt */
     if (Math.floor(t / 40) % 2 === 0) {
@@ -1101,7 +1134,7 @@ export class Renderer {
     /* title */
     c.textAlign = 'center';
     c.fillStyle = C.GOLD; c.font = `16px ${FONT}`;
-    c.fillText('FLOOR CLEARED!', mx, 50);
+    c.fillText('LEVEL CLEARED!', mx, 50);
     c.fillStyle = '#8080c0'; c.font = `8px ${FONT}`;
     c.fillText('Choose a reward before advancing.', mx, 74);
 

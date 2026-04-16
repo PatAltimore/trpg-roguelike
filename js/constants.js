@@ -36,9 +36,9 @@ export const TRI_DMG = 1;
 export const ITEMS = {
   POTION:       { name: 'Potion',       type: 'consumable', effect: 'heal_full',  desc: 'Restores all HP' },
   VULNERARY:    { name: 'Vulnerary',    type: 'consumable', effect: 'heal_half',  desc: 'Restores 50% HP' },
-  STRENGTH_TOME:{ name: 'Str Tonic',    type: 'consumable', effect: 'str_boost',  desc: '+3 STR this floor' },
-  SPEED_TOME:   { name: 'Spd Tonic',    type: 'consumable', effect: 'spd_boost',  desc: '+3 SPD this floor' },
-  SHIELD:       { name: 'Shield',       type: 'consumable', effect: 'def_boost',  desc: '+3 DEF this floor' },
+  STRENGTH_TOME:{ name: 'Str Tonic',    type: 'consumable', effect: 'str_boost',  desc: '+3 STR this level' },
+  SPEED_TOME:   { name: 'Spd Tonic',    type: 'consumable', effect: 'spd_boost',  desc: '+3 SPD this level' },
+  SHIELD:       { name: 'Shield',       type: 'consumable', effect: 'def_boost',  desc: '+3 DEF this level' },
 };
 
 /* Weapons that can drop as items (equippable) */
@@ -73,10 +73,10 @@ export const S_TRANS_OUT    = 9;   // units marching off-screen
 export const S_TRANS_IN     = 10;  // units marching on-screen
 export const S_VICTORY      = 11;  // final victory screen
 export const S_DRAFT        = 12;  // team selection before run
-export const S_BONUS        = 13;  // post-floor reward choice
+export const S_BONUS        = 13;  // post-level reward choice
 
 /* ── Journey structure ── */
-export const FINAL_FLOOR    = 4;   // boss level — last floor of the journey
+export const FINAL_FLOOR    = 4;   // boss level — last level of the journey
 
 /* ── Palette ── */
 export const C = {

@@ -85,6 +85,8 @@ class Game {
     this._combatIdx = 0;
     this._enemyCombatPending = false;
     this._combatTimer = 0;
+    this._combatAtk = null;
+    this._combatDef = null;
     this._healMode = false;
     this._stealMode = false;
     this._itemMenu = null;  // { items: [...], sel: 0 } when open
@@ -131,7 +133,7 @@ class Game {
     this._tutTick();
     if (this.state === S_TRANS_OUT || this.state === S_TRANS_IN) { this._stepTransition(); return; }
     if (this.state === S_ENEMY_TURN) this._stepEnemy();
-    if (this.state === S_COMBAT_ANIM) this._stepCombatAnim();
+    else if (this.state === S_COMBAT_ANIM) this._stepCombatAnim();
 
     /* tutorial: detect when all player units are done */
     if (this.tut && this.state === S_IDLE && this.phase === 'player') {
@@ -433,8 +435,14 @@ class Game {
     this._combatLog = resolve(atk, def, at, dt);
     this._combatIdx = 0;
     this._combatTimer = 0;
+    this._combatAtk = atk;   // track attacker for visual feedback
+    this._combatDef = def;   // track defender for visual feedback
+    this.sel = atk;           // selection ring on attacker
     this.state = S_COMBAT_ANIM;
-    this.preview = null;
+    /* show combat forecast in sidebar during enemy combat */
+    const af = forecast(atk, def, dt);
+    const df = canCounter(atk, def) ? forecast(def, atk, at) : null;
+    this.preview = { atk, def, af, df };
   }
 
   _stepCombatAnim() {
@@ -871,7 +879,7 @@ class Game {
     }
   }
 
-  /* ═══════════ POST-FLOOR BONUS ═══════════ */
+  /* ═══════════ POST-LEVEL BONUS ═══════════ */
   _beginBonus() {
     const opts = [];
 
