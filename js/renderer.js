@@ -23,6 +23,9 @@ export class Renderer {
     this._bonusBounds = null;     /* bonus screen click targets */
     this._rewindBtnBounds = null; /* ↺ charge counter bounds (informational) */
     this._logEntryBounds = null;  /* clickable log entry hit areas */
+    this._logScrollUp    = null;  /* ▲ scroll arrow bounds */
+    this._logScrollDown  = null;  /* ▼ scroll arrow bounds */
+    this._logPanelBounds = null;  /* full log panel area (for wheel events) */
     this._histContinueBtn = null; /* history view CONTINUE button */
     this._histCancelBtn   = null; /* history view CANCEL button */
   }
@@ -439,15 +442,18 @@ export class Renderer {
     c.fillRect(0, 0, mapW, CANVAS_H);
     /* top banner */
     c.fillStyle = 'rgba(5,10,40,0.90)';
-    c.fillRect(0, 0, mapW, 36);
+    c.fillRect(0, 0, mapW, 42);
     c.strokeStyle = 'rgba(80,120,255,0.75)';
     c.lineWidth = 1;
-    c.strokeRect(0, 0, mapW, 36);
+    c.strokeRect(0, 0, mapW, 42);
+    const snap = g._historyView.snap;
+    c.textAlign = 'center';
     c.fillStyle = '#8090ff';
     c.font = `9px ${FONT}`;
-    c.textAlign = 'center';
-    const snap = g._historyView.snap;
-    c.fillText(`\u25C4 HISTORY  \u00B7  Turn ${snap.turn}`, mapW / 2, 23);
+    c.fillText(`\u25C4 HISTORY  \u00B7  Turn ${snap.turn}`, mapW / 2, 17);
+    c.fillStyle = '#505880';
+    c.font = `6px ${FONT}`;
+    c.fillText('\u2191\u2193 arrows to browse  \u00B7  Enter to continue from here  \u00B7  Esc to cancel', mapW / 2, 33);
   }
 
   /* ═══════════ UNITS ═══════════ */
@@ -601,7 +607,7 @@ export class Renderer {
     this._sidebarContentY = y;
 
     /* combat / heal / steal preview — only draw if it fits before the fixed bottom zone */
-    const BOTTOM_ZONE_TOP = CANVAS_H - 204; // reserve 204px for log + controls
+    const BOTTOM_ZONE_TOP = CANVAS_H - 215; // reserve space for log (123px) + controls + gaps
     if (g.preview && y + 10 < BOTTOM_ZONE_TOP) {
       if (g.preview.heal) { this._healPreview(g.preview, sx, y, sw); }
       else if (g.preview.steal) { this._stealPreview(g.preview, sx, y, sw); }
@@ -612,7 +618,7 @@ export class Renderer {
     const SOUND_Y    = CANVAS_H - 34;
     const ENDTURN_Y  = SOUND_Y - 46;
     const LOG_BTM    = ENDTURN_Y - 8;
-    const LOG_TOP    = LOG_BTM - 114;  // 114px panel: 14px header + 7 lines×13px + 11px pad
+    const LOG_TOP    = LOG_BTM - 123;  // 123px panel: 14px header + 7 lines×14px + 11px pad
 
     /* play log */
     this._playLog(g, sx, LOG_TOP, sw);
@@ -762,76 +768,132 @@ export class Renderer {
 
   _playLog(g, sx, y, sw) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    const LOG_LINES = 7, LINE_H = 13;
+    const LOG_LINES = 7, LINE_H = 14;
     const panelH = 14 + LOG_LINES * LINE_H + 11;
     const selectedEntry = g._historyView ? g._historyView.entry : null;
     const hasRewind = g.rewindsLeft > 0 && g.snapshots && g.snapshots.length > 0;
+    const allEntries = g.playLog || [];
+    const totalEntries = allEntries.length;
+    const scroll = Math.max(0, Math.min(g._logScroll || 0, Math.max(0, totalEntries - LOG_LINES)));
+    const endIdx   = totalEntries - scroll;
+    const startIdx = Math.max(0, endIdx - LOG_LINES);
+    const canScrollUp   = endIdx < totalEntries;    // older entries above
+    const canScrollDown = scroll > 0;               // newer entries below
 
     /* panel background */
     c.fillStyle = '#080810'; c.fillRect(x - 4, y, w + 8, panelH);
     c.strokeStyle = g._historyView ? '#4050c0' : '#202040';
     c.lineWidth = 1; c.strokeRect(x - 4, y, w + 8, panelH);
+    /* record panel bounds for wheel-scroll hit testing */
+    this._logPanelBounds = { x: x - 4, y, w: w + 8, h: panelH };
 
-    /* header */
+    /* ── header row ── */
     c.fillStyle = '#4040a0'; c.font = `6px ${FONT}`; c.textAlign = 'left';
     c.fillText('PLAY LOG', x, y + 10);
 
-    /* ↺ N charge counter (right side of header — informational) */
-    const rbw = 46, rbh = 14, rbx = sx + sw - rbw - 8, rby = y + 1;
+    /* ↺ N charge counter — far right of header */
+    const rbw = 44, rbh = 13, rbx = sx + sw - rbw - 6, rby = y + 1;
     c.fillStyle = hasRewind ? '#0e1e2e' : '#0a0a0a';
     c.fillRect(rbx, rby, rbw, rbh);
     c.strokeStyle = hasRewind ? '#30b0e0' : '#252530';
     c.lineWidth = 1; c.strokeRect(rbx, rby, rbw, rbh);
     c.fillStyle = hasRewind ? '#40d0f0' : '#303040';
     c.font = `6px ${FONT}`; c.textAlign = 'center';
-    c.fillText(`\u21BA ${g.rewindsLeft}`, rbx + rbw / 2, rby + 10);
+    c.fillText(`\u21BA ${g.rewindsLeft}`, rbx + rbw / 2, rby + 9);
     c.textAlign = 'left';
     this._rewindBtnBounds = { x: rbx, y: rby, w: rbw, h: rbh };
 
-    /* log entries — most recent at bottom, each is a clickable hit area */
+    /* ▲ / ▼ scroll arrow buttons — just left of the ↺ counter */
+    const arH = 13, arW = 13, arGap = 2;
+    const arDnX = rbx - arW - 4;
+    const arUpX = arDnX - arW - arGap;
+    const arY   = rby;
+
+    /* ▲ up button */
+    c.fillStyle = canScrollUp ? '#0e2030' : '#0a0a0a';
+    c.fillRect(arUpX, arY, arW, arH);
+    c.strokeStyle = canScrollUp ? '#2080a0' : '#202030';
+    c.lineWidth = 1; c.strokeRect(arUpX, arY, arW, arH);
+    c.fillStyle = canScrollUp ? '#60c0e0' : '#303040';
+    c.font = `8px ${FONT}`; c.textAlign = 'center';
+    c.fillText('\u25B2', arUpX + arW / 2, arY + 10);
+    this._logScrollUp = { x: arUpX, y: arY, w: arW, h: arH };
+
+    /* ▼ down button */
+    c.fillStyle = canScrollDown ? '#0e2030' : '#0a0a0a';
+    c.fillRect(arDnX, arY, arW, arH);
+    c.strokeStyle = canScrollDown ? '#2080a0' : '#202030';
+    c.lineWidth = 1; c.strokeRect(arDnX, arY, arW, arH);
+    c.fillStyle = canScrollDown ? '#60c0e0' : '#303040';
+    c.font = `8px ${FONT}`; c.textAlign = 'center';
+    c.fillText('\u25BC', arDnX + arW / 2, arY + 10);
+    this._logScrollDown = { x: arDnX, y: arY, w: arW, h: arH };
+
+    /* ── entries ── */
     this._logEntryBounds = [];
-    const allEntries = g.playLog || [];
-    const entries = allEntries.slice(-LOG_LINES);
-    let ey = y + 18;
+    const entries = allEntries.slice(startIdx, endIdx);
+    /* clip rendering to log panel content area */
+    c.save();
+    c.beginPath(); c.rect(x - 4, y + 14, w + 8, panelH - 14); c.clip();
+
+    /* "older above" gradient hint */
+    if (canScrollUp) {
+      const grd = c.createLinearGradient(0, y + 14, 0, y + 26);
+      grd.addColorStop(0, 'rgba(40,50,100,0.5)');
+      grd.addColorStop(1, 'rgba(40,50,100,0)');
+      c.fillStyle = grd;
+      c.fillRect(x - 4, y + 14, w + 8, 12);
+    }
+
+    let ey = y + 25;
     for (const entry of entries) {
-      const bx = x - 4, bw = w + 8, bh = LINE_H;
+      const ebx = x - 4, ebw = w + 8, ebh = LINE_H;
       const isSelected = entry === selectedEntry;
       const hasSnap    = !!entry.snap;
 
-      /* highlight selected entry */
+      /* highlight selected entry; every entry is navigable so all get a subtle row tint */
       if (isSelected) {
-        c.fillStyle = 'rgba(60,80,200,0.35)';
-        c.fillRect(bx, ey - 9, bw, bh);
-        c.strokeStyle = 'rgba(100,140,255,0.6)';
-        c.lineWidth = 1;
-        c.strokeRect(bx, ey - 9, bw, bh);
-      } else if (hasSnap) {
-        /* subtle hover affordance for clickable entries */
-        c.fillStyle = 'rgba(30,30,80,0.20)';
-        c.fillRect(bx, ey - 9, bw, bh);
+        c.fillStyle = 'rgba(60,80,200,0.38)';
+        c.fillRect(ebx, ey - 10, ebw, ebh);
+        c.strokeStyle = 'rgba(100,140,255,0.65)';
+        c.lineWidth = 1; c.strokeRect(ebx, ey - 10, ebw, ebh);
+      } else {
+        c.fillStyle = 'rgba(30,30,80,0.14)';
+        c.fillRect(ebx, ey - 10, ebw, ebh);
       }
 
-      /* truncate to fit panel width */
+      /* entry text — proportional sans-serif for clarity */
       let txt = entry.text;
-      const maxChars = Math.floor((w - 2) / 4.2);
+      const maxChars = Math.floor((w - 16) / 5.2); // ~5.2px per char at 9px Arial
       if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '\u2026';
-
       c.fillStyle = isSelected ? '#c0d0ff' : entry.color;
-      c.font = '7px monospace';
-      c.fillText(txt, x, ey);
+      c.font = '9px Arial, sans-serif';
+      c.textAlign = 'left';
+      c.fillText(txt, x + 1, ey);
 
-      /* small ↺ indicator on entries that have a rewindable snapshot */
-      if (hasSnap && !isSelected) {
-        c.fillStyle = '#30607080';
-        c.font = `5px ${FONT}`;
+      /* selected entry gets a small ↺ marker to remind the player this is the restore point */
+      if (isSelected) {
+        c.fillStyle = '#6080c0';
+        c.font = `6px ${FONT}`;
         c.textAlign = 'right';
-        c.fillText('\u21BA', sx + sw - 12, ey);
-        c.textAlign = 'left';
+        c.fillText('\u21BA', sx + sw - 10, ey);
       }
 
-      this._logEntryBounds.push({ x: bx, y: ey - 9, w: bw, h: bh, entry });
+      this._logEntryBounds.push({ x: ebx, y: ey - 10, w: ebw, h: ebh, entry });
       ey += LINE_H;
     }
+
+    /* "newer below" gradient hint */
+    if (canScrollDown) {
+      const grd = c.createLinearGradient(0, y + panelH - 14, 0, y + panelH - 2);
+      grd.addColorStop(0, 'rgba(40,50,100,0)');
+      grd.addColorStop(1, 'rgba(40,50,100,0.5)');
+      c.fillStyle = grd;
+      c.fillRect(x - 4, y + panelH - 14, w + 8, 12);
+    }
+
+    c.restore();
+    c.textAlign = 'left';
   }
 
 
@@ -856,7 +918,7 @@ export class Renderer {
     c.lineWidth = 2; c.strokeRect(bx, y, bw, 20);
     c.fillStyle = hasCharge ? '#40d0f0' : '#404050';
     c.font = `7px ${FONT}`; c.textAlign = 'center';
-    c.fillText(`CONTINUE  (\u21BA ${g.rewindsLeft} left)`, sx + sw / 2, y + 13);
+    c.fillText(`REWIND  (\u21BA ${g.rewindsLeft} left)`, sx + sw / 2, y + 13);
     this._histContinueBtn = { x: bx, y, w: bw, h: 20 };
 
     /* CANCEL button (below, 20px tall, with 6px gap) */
@@ -867,7 +929,7 @@ export class Renderer {
     c.lineWidth = 1; c.strokeRect(bx, cy2, bw, 20);
     c.fillStyle = '#8080a0';
     c.font = `7px ${FONT}`; c.textAlign = 'center';
-    c.fillText('CANCEL REWIND', sx + sw / 2, cy2 + 13);
+    c.fillText('CANCEL', sx + sw / 2, cy2 + 13);
     this._histCancelBtn = { x: bx, y: cy2, w: bw, h: 20 };
   }
 

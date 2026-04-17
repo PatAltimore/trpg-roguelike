@@ -86,6 +86,7 @@ class Game {
     this.rewindsLeft = 3;    // charges remaining this level
     this._historyView = null; // {snap, entry} when browsing history, null otherwise
     this._latestSnap  = null; // most recent snapshot — attached to log entries
+    this._logScroll   = 0;   // 0 = show latest; positive = show older entries
     this._allEnemies = [];   // all enemies spawned this level (incl. dead) for rewind
 
     /* combat animation */
@@ -108,7 +109,8 @@ class Game {
     this.cv.addEventListener('click',       e => this._click(e));
     this.cv.addEventListener('contextmenu', e => { e.preventDefault(); this._cancel(); });
     this.cv.addEventListener('mousemove',   e => this._hover(e));
-    document.addEventListener('keydown',    e => { if (e.key === 'Escape') this._cancel(); });
+    this.cv.addEventListener('wheel',       e => this._onWheel(e), { passive: false });
+    document.addEventListener('keydown',    e => this._keyDown(e));
 
     /* mobile touch support — pinch-zoom, pan, tap-to-play */
     this.touch = new TouchController(this.cv, this);
@@ -118,11 +120,15 @@ class Game {
   /* ═══════════ PLAY LOG & REWIND ═══════════ */
 
   _addLog(text, color = '#a0a0c0') {
-    this.playLog.push({ text, color, snap: this._latestSnap });
-    if (this.playLog.length > 80) this.playLog.shift();
+    /* capture the exact playfield state before this entry is added so
+       history view can show precisely what the board looked like at this moment */
+    this.playLog.push({ text, color, snap: this._captureState() });
+    if (this.playLog.length > 120) this.playLog.shift();
   }
 
-  _takeSnapshot() {
+  /* Shallow-copy of the current playfield — used both by _addLog (per-entry)
+     and by _takeSnapshot (major checkpoints stored in snapshots[]). */
+  _captureState() {
     const snapUnit = u => ({
       unit: u,
       x: u.x, y: u.y, hp: u.hp, alive: u.alive,
@@ -130,14 +136,19 @@ class Game {
       str: u.str, spd: u.spd, def: u.def,
       inventory: u.inventory.map(i => ({ ...i })),
     });
-    this.snapshots.push({
+    return {
       turn: this.turn,
-      logLen: this.playLog.length,
+      logLen: this.playLog.length,   // entries before this snap
       playerStates: this.players.map(snapUnit),
       enemyStates:  this._allEnemies.map(snapUnit),
       droppedItems: this.droppedItems.map(d => ({ item: { ...d.item }, x: d.x, y: d.y })),
-    });
-    if (this.snapshots.length > 10) this.snapshots.shift();
+    };
+  }
+
+  _takeSnapshot() {
+    const snap = this._captureState();
+    this.snapshots.push(snap);
+    if (this.snapshots.length > 12) this.snapshots.shift();
     this._latestSnap = this.snapshots[this.snapshots.length - 1];
   }
 
@@ -157,9 +168,8 @@ class Game {
     this.turn = snap.turn;
     this.playLog = this.playLog.slice(0, snap.logLen);
 
-    /* trim snapshots — remove the used snapshot and anything after it */
-    const idx = this.snapshots.indexOf(snap);
-    if (idx >= 0) this.snapshots = this.snapshots.slice(0, idx);
+    /* trim major snapshots that came after this restore point */
+    this.snapshots = this.snapshots.filter(s => s.logLen <= snap.logLen);
 
     /* reset any in-flight state */
     this.phase = 'player';
@@ -168,6 +178,7 @@ class Game {
     this._enemyCombatPending = false;
     this._combatLog = []; this._combatIdx = 0; this._combatTimer = 0;
     this._historyView = null;
+    this._logScroll   = 0;
     this._latestSnap = this.snapshots.length ? this.snapshots[this.snapshots.length - 1] : null;
     this._deselect();
 
@@ -231,6 +242,7 @@ class Game {
     this.rewindsLeft  = 3;
     this._historyView = null;
     this._latestSnap  = null;
+    this._logScroll   = 0;
     this._takeSnapshot(); // Turn 1 initial state — sets _latestSnap before first log entry
     const levelLabel = this.floor === 0 ? 'Tutorial' : `Level ${this.floor}`;
     this._addLog(`── ${levelLabel} begins ──`, '#ffd700');
@@ -309,6 +321,19 @@ class Game {
       SFX.menuBack();
       return;
     }
+    /* ── log scroll arrow clicks ── */
+    const scrollUp = this.ren._logScrollUp;
+    const scrollDn = this.ren._logScrollDown;
+    if (scrollUp && px >= scrollUp.x && px <= scrollUp.x + scrollUp.w && py >= scrollUp.y && py <= scrollUp.y + scrollUp.h) {
+      const maxScroll = Math.max(0, (this.playLog ? this.playLog.length : 0) - 7);
+      this._logScroll = Math.min(this._logScroll + 1, maxScroll);
+      return;
+    }
+    if (scrollDn && px >= scrollDn.x && px <= scrollDn.x + scrollDn.w && py >= scrollDn.y && py <= scrollDn.y + scrollDn.h) {
+      this._logScroll = Math.max(0, this._logScroll - 1);
+      return;
+    }
+
     /* ── log entry click — enter history view (free) ── */
     const leb = this.ren._logEntryBounds;
     if (leb && (this.state === S_IDLE || this.state === S_LOSE || this.state === S_WIN)) {
@@ -535,6 +560,70 @@ class Game {
     this._doCombat(this.sel, tgt);
   }
 
+  /* ── keyboard ── */
+  _keyDown(e) {
+    if (e.key === 'Escape') { this._cancel(); return; }
+
+    /* arrow keys navigate history entries when the log is in history view */
+    if (this._historyView && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      this._historyNavigate(e.key === 'ArrowUp' ? -1 : 1);
+      return;
+    }
+
+    /* Enter / Space confirm rewind while browsing history */
+    if (this._historyView && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      if (this.rewindsLeft > 0) this._restoreSnapshot(this._historyView.snap);
+      return;
+    }
+  }
+
+  /* Move through log entries that carry a snapshot.
+     dir: -1 = older (ArrowUp), +1 = newer (ArrowDown).
+     Auto-scrolls the panel so the newly selected entry stays in view. */
+  _historyNavigate(dir) {
+    const LOG_LINES = 7;
+    const log = this.playLog || [];
+    const curEntry = this._historyView.entry;
+    const curIdx   = log.indexOf(curEntry);
+
+    /* search for next snapped entry in the given direction */
+    let newIdx = -1;
+    if (dir === -1) {
+      /* older — walk toward index 0 */
+      const from = curIdx < 0 ? log.length - 1 : curIdx - 1;
+      for (let i = from; i >= 0; i--) {
+        if (log[i].snap) { newIdx = i; break; }
+      }
+    } else {
+      /* newer — walk toward end */
+      const from = curIdx < 0 ? 0 : curIdx + 1;
+      for (let i = from; i < log.length; i++) {
+        if (log[i].snap) { newIdx = i; break; }
+      }
+    }
+    if (newIdx < 0) return; // already at the boundary
+
+    const newEntry = log[newIdx];
+    this._historyView = { snap: newEntry.snap, entry: newEntry };
+    SFX.select();
+
+    /* auto-scroll so the selected entry stays inside the visible window */
+    const total    = log.length;
+    const scroll   = Math.max(0, this._logScroll || 0);
+    const endIdx   = total - scroll;
+    const startIdx = Math.max(0, endIdx - LOG_LINES);
+
+    if (newIdx < startIdx) {
+      /* entry is above the visible window — scroll up (show older) */
+      this._logScroll = Math.max(0, total - newIdx - LOG_LINES);
+    } else if (newIdx >= endIdx) {
+      /* entry is below the visible window — scroll down (show newer) */
+      this._logScroll = Math.max(0, total - newIdx - 1);
+    }
+  }
+
   /* ── cancel (right-click / Escape) ── */
   _cancel() {
     if (this._historyView) { this._historyView = null; SFX.menuBack(); return; }
@@ -561,6 +650,20 @@ class Game {
       /* deselect unit */
       this._deselect();
     }
+  }
+
+  /* ── mouse wheel — scroll the play log ── */
+  _onWheel(e) {
+    const { px, py } = this._px(e);
+    /* check if wheel is over the log panel area */
+    const logPanel = this.ren._logPanelBounds;
+    if (!logPanel) return;
+    if (px < logPanel.x || px > logPanel.x + logPanel.w) return;
+    if (py < logPanel.y || py > logPanel.y + logPanel.h) return;
+    e.preventDefault();
+    const dir = e.deltaY > 0 ? -1 : 1; // scroll up = show older
+    const maxScroll = Math.max(0, (this.playLog ? this.playLog.length : 0) - 7);
+    this._logScroll = Math.max(0, Math.min(this._logScroll + dir, maxScroll));
   }
 
   /* ═══════════ COMBAT ═══════════ */
