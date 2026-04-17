@@ -17,10 +17,12 @@ export class Renderer {
     canvas.width  = CANVAS_W;
     canvas.height = CANVAS_H;
     this.t = 0;
-    this._btn = null;          /* end-turn button bounds */
-    this._sndBtn = null;       /* sound toggle button bounds */
-    this._draftBounds = null;  /* draft screen click targets */
-    this._bonusBounds = null;  /* bonus screen click targets */
+    this._btn = null;             /* end-turn button bounds */
+    this._sndBtn = null;          /* sound toggle button bounds */
+    this._draftBounds = null;     /* draft screen click targets */
+    this._bonusBounds = null;     /* bonus screen click targets */
+    this._rewindBtnBounds = null; /* rewind button bounds */
+    this._snapshotBounds = null;  /* rewind snapshot list bounds */
   }
 
   tick() { this.t++; }
@@ -528,18 +530,31 @@ export class Renderer {
     /* store sidebar content bottom for action menu positioning */
     this._sidebarContentY = y;
 
-    /* combat / heal / steal preview */
-    if (g.preview) {
-      if (g.preview.heal) { this._healPreview(g.preview, sx, y, sw); y += 80; }
-      else if (g.preview.steal) { this._stealPreview(g.preview, sx, y, sw); y += 80; }
-      else { this._combatPreview(g.preview, sx, y, sw); y += 128; }
+    /* combat / heal / steal preview — only draw if it fits before the fixed bottom zone */
+    const BOTTOM_ZONE_TOP = CANVAS_H - 204; // reserve 204px for log + controls
+    if (g.preview && y + 10 < BOTTOM_ZONE_TOP) {
+      if (g.preview.heal) { this._healPreview(g.preview, sx, y, sw); }
+      else if (g.preview.steal) { this._stealPreview(g.preview, sx, y, sw); }
+      else { this._combatPreview(g.preview, sx, y, sw); }
     }
 
-    /* end-turn + sound toggle: place below content, but hide when action menu / atk select is active */
+    /* ── fixed bottom section ── */
+    const SOUND_Y    = CANVAS_H - 34;
+    const ENDTURN_Y  = SOUND_Y - 46;
+    const LOG_BTM    = ENDTURN_Y - 8;
+    const LOG_TOP    = LOG_BTM - 114;  // 114px panel: 14px header + 7 lines×13px + 11px pad
+
+    /* play log or rewind picker */
+    if (g._rewindMode) {
+      this._rewindPicker(g, sx, LOG_TOP, sw);
+    } else {
+      this._playLog(g, sx, LOG_TOP, sw);
+    }
+
+    /* end-turn button */
     const showEndBtn = g.phase === 'player' && g.state !== S_ACTION_MENU && g.state !== S_ATK_SELECT;
-    const btnY = y + 10;
-    if (showEndBtn) { this._endBtn(sx, btnY, sw); this._soundToggle(sx, btnY + 46, sw); }
-    else this._soundToggle(sx, btnY, sw);
+    if (showEndBtn) this._endBtn(sx, ENDTURN_Y, sw);
+    this._soundToggle(sx, SOUND_Y, sw);
   }
 
   _unitAt(g, cur) {
@@ -550,17 +565,17 @@ export class Renderer {
   _unitPanel(u, x, y, w) {
     const c = this.cx;
     const invCount = u.inventory ? u.inventory.length : 0;
-    const panelH = 178 + (invCount > 0 ? 14 + invCount * 12 : 0);
+    const panelH = 180 + (invCount > 0 ? 14 + invCount * 12 : 0);
     c.fillStyle = u.isPlayer ? '#1a1a50' : '#501a1a';
     c.fillRect(x-4, y, w+8, panelH);
     c.strokeStyle = u.isPlayer ? '#3030a0' : '#a03030';
     c.lineWidth = 1; c.strokeRect(x-4, y, w+8, panelH);
 
     y += 12;
-    c.fillStyle = C.GOLD; c.font = `9px ${FONT}`; c.textAlign = 'left';
-    c.fillText(u.name, x, y); y += 14;
-    c.fillStyle = C.TXT; c.font = `7px ${FONT}`;
-    c.fillText(`Lv.${u.level}  ${u.weapon.name}`, x, y); y += 14;
+    c.fillStyle = C.GOLD; c.font = `8px ${FONT}`; c.textAlign = 'left';
+    c.fillText(u.name, x, y); y += 13;
+    c.fillStyle = '#8080b0'; c.font = `6px ${FONT}`;
+    c.fillText(`${u.className}  Lv.${u.level}  ${u.weapon.name}`, x, y); y += 13;
 
     /* HP bar */
     const pct = u.hp / u.maxHp;
@@ -671,6 +686,89 @@ export class Renderer {
 
     /* store bounds for click detection */
     g._menuBounds = { x: mx - 2, y: my, w: mw + 4, h: mh };
+  }
+
+  /* ═══════════ PLAY LOG ═══════════ */
+
+  _playLog(g, sx, y, sw) {
+    const c = this.cx, x = sx + 10, w = sw - 20;
+    const LOG_LINES = 7, LINE_H = 13;
+    const panelH = 14 + LOG_LINES * LINE_H + 11;
+
+    /* panel background */
+    c.fillStyle = '#080810'; c.fillRect(x - 4, y, w + 8, panelH);
+    c.strokeStyle = '#202040'; c.lineWidth = 1; c.strokeRect(x - 4, y, w + 8, panelH);
+
+    /* header */
+    c.fillStyle = '#4040a0'; c.font = `6px ${FONT}`; c.textAlign = 'left';
+    c.fillText('PLAY LOG', x, y + 10);
+
+    /* rewind button (in header, right side) */
+    const hasRewind = g.rewindsLeft > 0 && g.snapshots && g.snapshots.length > 0;
+    const rbw = 46, rbh = 14, rbx = sx + sw - rbw - 8, rby = y + 1;
+    c.fillStyle = hasRewind ? (g._rewindMode ? '#1a4060' : '#0e1e2e') : '#0a0a0a';
+    c.fillRect(rbx, rby, rbw, rbh);
+    c.strokeStyle = hasRewind ? '#30b0e0' : '#252530';
+    c.lineWidth = 1; c.strokeRect(rbx, rby, rbw, rbh);
+    c.fillStyle = hasRewind ? '#40d0f0' : '#303040';
+    c.font = `6px ${FONT}`; c.textAlign = 'center';
+    c.fillText(`\u21BA ${g.rewindsLeft}`, rbx + rbw / 2, rby + 10);
+    c.textAlign = 'left';
+    this._rewindBtnBounds = { x: rbx, y: rby, w: rbw, h: rbh };
+
+    /* log entries — most recent at bottom */
+    const entries = g.playLog ? g.playLog.slice(-LOG_LINES) : [];
+    let ey = y + 18;
+    for (const entry of entries) {
+      /* truncate to fit panel width using monospace estimate */
+      let txt = entry.text;
+      const maxChars = Math.floor((w - 2) / 4.2);
+      if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '\u2026';
+      c.fillStyle = entry.color;
+      c.font = '7px monospace';
+      c.fillText(txt, x, ey);
+      ey += LINE_H;
+    }
+  }
+
+  /* rewind picker — shown when _rewindMode is true */
+  _rewindPicker(g, sx, y, sw) {
+    const c = this.cx, x = sx + 10, w = sw - 20;
+    const snaps = g.snapshots || [];
+
+    /* panel background */
+    c.fillStyle = '#08101a'; c.fillRect(x - 4, y, w + 8, 114);
+    c.strokeStyle = '#30b0e0'; c.lineWidth = 1; c.strokeRect(x - 4, y, w + 8, 114);
+
+    c.fillStyle = '#40d0f0'; c.font = `6px ${FONT}`; c.textAlign = 'center';
+    c.fillText(`REWIND TO TURN  (\u21BA ${g.rewindsLeft} left)`, sx + sw / 2, y + 11);
+
+    /* cancel button */
+    const cbx = x - 4, cbw = w + 8, cbh = 16, cby = y + 94;
+    c.fillStyle = '#1a1a2a'; c.fillRect(cbx, cby, cbw, cbh);
+    c.strokeStyle = '#404060'; c.lineWidth = 1; c.strokeRect(cbx, cby, cbw, cbh);
+    c.fillStyle = '#808090'; c.font = `6px ${FONT}`; c.textAlign = 'center';
+    c.fillText('CANCEL', sx + sw / 2, cby + 11);
+
+    /* snapshot list — most recent at top, up to 5 shown */
+    this._snapshotBounds = [];
+    const visible = snaps.slice(-5).reverse();
+    let sy = y + 20;
+    for (const snap of visible) {
+      const bh = 13, bx = x - 4, bw = w + 8;
+      const alive = snap.playerStates ? snap.playerStates.filter(s => s.alive).length : '?';
+      const eAlive = snap.enemyStates ? snap.enemyStates.filter(s => s.alive).length : '?';
+      const hot = false;
+      c.fillStyle = '#0d1e30'; c.fillRect(bx, sy - 10, bw, bh);
+      c.strokeStyle = '#204050'; c.lineWidth = 1; c.strokeRect(bx, sy - 10, bw, bh);
+      c.fillStyle = '#80d0ff'; c.font = `6px ${FONT}`; c.textAlign = 'left';
+      c.fillText(`\u25C4 Turn ${snap.turn}`, x, sy);
+      c.fillStyle = '#607080'; c.textAlign = 'right';
+      c.fillText(`${alive}v${eAlive}`, sx + sw - 12, sy);
+      this._snapshotBounds.push({ x: bx, y: sy - 10, w: bw, h: bh, snap });
+      sy += 14;
+    }
+    c.textAlign = 'left';
   }
 
   _endBtn(sx, y, sw) {

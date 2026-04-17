@@ -80,6 +80,13 @@ class Game {
     /* dropped items on map */
     this.droppedItems = [];  // [{item, x, y}]
 
+    /* play log */
+    this.playLog     = [];   // [{text, color}] — capped at 80 entries
+    this.snapshots   = [];   // game-state snapshots for rewind
+    this.rewindsLeft = 3;    // charges remaining this level
+    this._rewindMode = false;// true while rewind picker is open
+    this._allEnemies = [];   // all enemies spawned this level (incl. dead) for rewind
+
     /* combat animation */
     this._combatLog = [];
     this._combatIdx = 0;
@@ -105,6 +112,65 @@ class Game {
     /* mobile touch support — pinch-zoom, pan, tap-to-play */
     this.touch = new TouchController(this.cv, this);
     this._loop();
+  }
+
+  /* ═══════════ PLAY LOG & REWIND ═══════════ */
+
+  _addLog(text, color = '#a0a0c0') {
+    this.playLog.push({ text, color });
+    if (this.playLog.length > 80) this.playLog.shift();
+  }
+
+  _takeSnapshot() {
+    const snapUnit = u => ({
+      unit: u,
+      x: u.x, y: u.y, hp: u.hp, alive: u.alive,
+      moved: u.moved, acted: u.acted,
+      str: u.str, spd: u.spd, def: u.def,
+      inventory: u.inventory.map(i => ({ ...i })),
+    });
+    this.snapshots.push({
+      turn: this.turn,
+      logLen: this.playLog.length,
+      playerStates: this.players.map(snapUnit),
+      enemyStates:  this._allEnemies.map(snapUnit),
+      droppedItems: this.droppedItems.map(d => ({ item: { ...d.item }, x: d.x, y: d.y })),
+    });
+    if (this.snapshots.length > 8) this.snapshots.shift();
+  }
+
+  _restoreSnapshot(snap) {
+    const restoreUnit = (s) => {
+      const u = s.unit;
+      u.x = s.x; u.y = s.y; u.hp = s.hp; u.alive = s.alive;
+      u.moved = s.moved; u.acted = s.acted;
+      u.str = s.str; u.spd = s.spd; u.def = s.def;
+      u.inventory = s.inventory.map(i => ({ ...i }));
+    };
+    snap.playerStates.forEach(restoreUnit);
+    snap.enemyStates.forEach(restoreUnit);
+    this.players = snap.playerStates.filter(s => s.alive).map(s => s.unit);
+    this.enemies = snap.enemyStates.filter(s => s.alive).map(s => s.unit);
+    this.droppedItems = snap.droppedItems.map(d => ({ item: { ...d.item }, x: d.x, y: d.y }));
+    this.turn = snap.turn;
+    this.playLog = this.playLog.slice(0, snap.logLen);
+
+    /* trim snapshots — remove the used snapshot and anything after it */
+    const idx = this.snapshots.indexOf(snap);
+    if (idx >= 0) this.snapshots = this.snapshots.slice(0, idx);
+
+    /* reset any in-flight state */
+    this.phase = 'player';
+    this.state = S_IDLE;
+    this._eActions = null; this._eIdx = 0; this._eTimer = 0;
+    this._enemyCombatPending = false;
+    this._combatLog = []; this._combatIdx = 0; this._combatTimer = 0;
+    this._rewindMode = false;
+    this._deselect();
+
+    this.rewindsLeft--;
+    this._addLog(`↺ Rewound to Turn ${snap.turn}`, '#40d0f0');
+    SFX.menuSelect();
   }
 
   /* ═══════════ TUTORIAL ═══════════ */
@@ -148,6 +214,7 @@ class Game {
     const existing = this.players.length > 0 ? this.players.filter(p => p.alive) : null;
     this.players = spawnParty(this.map.playerSpawns, this.floor, existing, this.difficulty, this.roster);
     this.enemies = spawnEnemies(this.map.enemySpawns, this.floor, this.difficulty);
+    this._allEnemies = this.enemies.slice(); // keep refs to all enemies for rewind
 
     this.droppedItems = [];
     this.state = S_IDLE;
@@ -155,6 +222,14 @@ class Game {
     this.turn  = 1;
     this._deselect();
     if (this.map.playerSpawns[0]) this.cur = { ...this.map.playerSpawns[0] };
+
+    /* reset log and rewind state for new level */
+    this.snapshots   = [];
+    this.rewindsLeft = 3;
+    this._rewindMode = false;
+    const levelLabel = this.floor === 0 ? 'Tutorial' : `Level ${this.floor}`;
+    this._addLog(`── ${levelLabel} begins ──`, '#ffd700');
+    this._takeSnapshot(); // Turn 1 initial state
 
     /* start tutorial on floor 1 */
     if (this.floor === 0) {
@@ -197,6 +272,31 @@ class Game {
     const sb = this.ren.soundBtn;
     if (sb && px >= sb.x && px <= sb.x + sb.w && py >= sb.y && py <= sb.y + sb.h) { toggleMute(); return; }
 
+    /* rewind button */
+    const rwb = this.ren._rewindBtnBounds;
+    if (rwb && px >= rwb.x && px <= rwb.x + rwb.w && py >= rwb.y && py <= rwb.y + rwb.h) {
+      if (this.rewindsLeft > 0 && this.snapshots.length > 0 &&
+          (this.state === S_IDLE || this.state === S_LOSE)) {
+        this._rewindMode = !this._rewindMode;
+        SFX.menuBack();
+      }
+      return;
+    }
+    /* snapshot entry selection when rewind picker is open */
+    if (this._rewindMode) {
+      const snapBounds = this.ren._snapshotBounds;
+      if (snapBounds) {
+        for (const b of snapBounds) {
+          if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
+            this._restoreSnapshot(b.snap);
+            return;
+          }
+        }
+      }
+      this._rewindMode = false;
+      return;
+    }
+
     if (this.state === S_TITLE) {
       const btns = this.ren._titleBtns;
       if (btns) {
@@ -224,7 +324,13 @@ class Game {
     if (this.state === S_BONUS) { this._clickBonus(px, py); return; }
     if (this.state === S_DRAFT) { this._clickDraft(px, py); return; }
     if (this.state === S_VICTORY) { this.floor = 0; this.state = S_TITLE; this.roster = null; return; }
-    if (this.state === S_LOSE)    { this.floor = 0; this.players = []; this.roster = null; this.state = S_TITLE; return; }
+    if (this.state === S_LOSE) {
+      /* if rewinding is available, block the title transition so the rewind button can be used */
+      if (!(this.rewindsLeft > 0 && this.snapshots.length > 0)) {
+        this.floor = 0; this.players = []; this.roster = null; this.state = S_TITLE;
+      }
+      return;
+    }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
         this.state === S_TRANS_OUT || this.state === S_TRANS_IN) return;
 
@@ -364,7 +470,9 @@ class Game {
         this._showActionMenu(); return;
       }
       const healAmt = this.sel.mag + this.sel.weapon.mt + 10;
+      const actual = Math.min(tgt.maxHp - tgt.hp, healAmt);
       tgt.hp = Math.min(tgt.maxHp, tgt.hp + healAmt);
+      this._addLog(`${this.sel.name} heals ${tgt.name}: +${actual} HP`, '#80ff80');
       SFX.hit();
       this.sel.acted = true;
       this._healMode = false;
@@ -383,8 +491,10 @@ class Game {
       if (Math.random() * 100 < chance && this.sel.inventory.length < MAX_INVENTORY) {
         const stolen = tgt.inventory.splice(0, 1)[0];
         this.sel.inventory.push(stolen);
+        this._addLog(`${this.sel.name} steals ${stolen.name}!`, '#c0ff80');
         SFX.hit();
       } else {
+        this._addLog(`${this.sel.name}: steal failed!`, '#a0a060');
         SFX.miss();
       }
       this.sel.acted = true;
@@ -403,6 +513,7 @@ class Game {
 
   /* ── cancel (right-click / Escape) ── */
   _cancel() {
+    if (this._rewindMode) { this._rewindMode = false; return; }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
         this.state === S_WIN || this.state === S_LOSE || this.state === S_TITLE ||
         this.state === S_TRANS_OUT || this.state === S_TRANS_IN ||
@@ -447,13 +558,23 @@ class Game {
 
   _stepCombatAnim() {
     this._combatTimer++;
-    /* apply damage + play sound at the start of each strike */
+    /* apply damage + play sound + log at the start of each strike */
     if (this._combatTimer === 1 && this._combatIdx < this._combatLog.length) {
       const entry = this._combatLog[this._combatIdx];
       if (entry.dmg > 0) entry.tgt.takeDmg(entry.dmg);
-      if (!entry.hit) SFX.miss();
-      else if (entry.crit) SFX.crit();
-      else SFX.hit();
+      if (!entry.hit) {
+        SFX.miss();
+        this._addLog(`${entry.src.name}: Miss!`,
+          entry.src.isPlayer ? '#8080ff' : '#ff8080');
+      } else if (entry.crit) {
+        SFX.crit();
+        this._addLog(`${entry.src.name} CRIT! ${entry.dmg} dmg`,
+          entry.src.isPlayer ? '#c0c0ff' : '#ffc0c0');
+      } else {
+        SFX.hit();
+        this._addLog(`${entry.src.name} → ${entry.tgt.name}: ${entry.dmg} dmg`,
+          entry.src.isPlayer ? '#8080ff' : '#ff8080');
+      }
     }
     if (this._combatTimer < 30) return;
     this._combatTimer = 0;
@@ -462,6 +583,10 @@ class Game {
       if (this.sel) this.sel.acted = true;
       const hadEnemies = this.enemies.length;
       const hadPlayers = this.players.length;
+      /* log kills before filtering */
+      for (const u of [...this.enemies, ...this.players]) {
+        if (!u.alive) this._addLog(`${u.name} falls!`, '#ffd700');
+      }
       /* drop items from dead units */
       let itemsDropped = false;
       for (const u of [...this.enemies, ...this.players]) {
@@ -500,6 +625,7 @@ class Game {
   /* ═══════════ ENEMY TURN ═══════════ */
   _endPlayerTurn() {
     SFX.turnEnd();
+    this._addLog('Enemy phase', '#ff8060');
     this.players.forEach(p => p.reset());
     this._deselect();
     this.phase = 'enemy';
@@ -557,6 +683,10 @@ class Game {
       if (t.heal) u.hp = Math.min(u.maxHp, u.hp + Math.max(1, Math.floor(u.maxHp * t.heal / 100)));
     }
     this.enemies.forEach(e => e.reset());
+
+    /* log & snapshot at start of each player turn */
+    this._addLog(`── Turn ${this.turn} ──`, '#707090');
+    this._takeSnapshot();
   }
 
   /* ═══════════ LEVEL TRANSITION ═══════════ */
@@ -797,6 +927,7 @@ class Game {
       if (d.x === u.x && d.y === u.y && u.inventory.length < MAX_INVENTORY) {
         u.inventory.push(d.item);
         toRemove.push(i);
+        this._addLog(`${u.name} picks up ${d.item.name}`, '#c0ff80');
         SFX.select();
       }
     }
@@ -833,6 +964,7 @@ class Game {
     /* remove from inventory */
     const idx = u.inventory.indexOf(item);
     if (idx >= 0) u.inventory.splice(idx, 1);
+    this._addLog(`${u.name} uses ${item.name}`, '#80ff80');
     SFX.hit();
   }
 

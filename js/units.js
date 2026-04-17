@@ -1,6 +1,19 @@
 import { W_SWORD, W_AXE, W_LANCE, W_BOW, W_FIRE, W_THUNDER, W_DARK, W_STAFF, W_JAVELIN,
          ITEMS, MAX_INVENTORY } from './constants.js';
 
+/* ── Two-word unit name pools ── */
+const P_ADJ  = ['Brave','Swift','Bold','Keen','Iron','Wise','Noble','Deft','Stern','True','Valiant','Steady'];
+const P_NAME = ['Aldric','Lyra','Kael','Serra','Dorn','Finn','Mira','Rael','Zara','Cael','Tarn','Vel'];
+const E_ADJ  = ['Grim','Dark','Fell','Foul','Vile','Cruel','Bleak','Dread','Sour','Dire','Feral','Wrath'];
+const E_NAME = ['Mors','Gruk','Varn','Thal','Krag','Brin','Hex','Reth','Skar','Druk','Mal','Var'];
+
+function genName(id, isPlayer, key) {
+  if (key === 'WARLORD') return 'Dark Sovereign';
+  const adj  = isPlayer ? P_ADJ  : E_ADJ;
+  const gn   = isPlayer ? P_NAME : E_NAME;
+  return `${adj[id % adj.length]} ${gn[id % gn.length]}`;
+}
+
 export const W_DAGGER = { name: 'Dagger', mt: 3, hit: 95, rng: [1,1], magic: false, tri: 'sword' };
 
 /* ── Class templates ── */
@@ -30,7 +43,8 @@ export class Unit {
     const c = CLASSES[key];
     this.id = _id++;
     this.key = key;
-    this.name = c.name;
+    this.className = c.name;                      // class name: "Lord", "Fighter", …
+    this.name = genName(this.id, isPlayer, key);  // unique two-word name for the log
     this.lbl  = c.lbl;
     this.hue  = c.hue;
     this.weapon = c.w;
