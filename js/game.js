@@ -238,6 +238,7 @@ class Game {
     if (this.map.playerSpawns[0]) this.cur = { ...this.map.playerSpawns[0] };
 
     /* reset log and rewind state for new level */
+    this.playLog      = [];
     this.snapshots    = [];
     this.rewindsLeft  = 3;
     this._historyView = null;
