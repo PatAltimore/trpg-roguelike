@@ -21,8 +21,10 @@ export class Renderer {
     this._sndBtn = null;          /* sound toggle button bounds */
     this._draftBounds = null;     /* draft screen click targets */
     this._bonusBounds = null;     /* bonus screen click targets */
-    this._rewindBtnBounds = null; /* rewind button bounds */
-    this._snapshotBounds = null;  /* rewind snapshot list bounds */
+    this._rewindBtnBounds = null; /* ↺ charge counter bounds (informational) */
+    this._logEntryBounds = null;  /* clickable log entry hit areas */
+    this._histContinueBtn = null; /* history view CONTINUE button */
+    this._histCancelBtn   = null; /* history view CANCEL button */
   }
 
   tick() { this.t++; }
@@ -44,6 +46,16 @@ export class Renderer {
     /* transition overlays — skip normal highlights/units */
     if (g.state === S_TRANS_OUT || g.state === S_TRANS_IN) {
       this._transOverlay(g);
+      this._sidebar(g);
+      return;
+    }
+
+    /* ── history view — frozen snapshot of the past ── */
+    if (g._historyView) {
+      const snap = g._historyView.snap;
+      this._droppedItemsList(snap.droppedItems);
+      this._unitsFromSnap(snap);
+      this._historyOverlay(g);
       this._sidebar(g);
       return;
     }
@@ -380,6 +392,64 @@ export class Renderer {
     }
   }
 
+  /* ═══════════ DROPPED ITEMS (list variant) ═══════════ */
+  /* Renders a dropped-items array directly (used by history view) */
+  _droppedItemsList(items) {
+    if (!items || !items.length) return;
+    const c = this.cx;
+    for (const d of items) {
+      const x = d.x * TILE, y = d.y * TILE;
+      const pulse = 0.5 + Math.sin(this.t * 0.1 + d.x + d.y) * 0.3;
+      c.fillStyle = `rgba(255,215,0,${pulse * 0.3})`;
+      c.fillRect(x + 4, y + 4, TILE - 8, TILE - 8);
+      c.fillStyle = `rgba(200,160,40,${pulse + 0.2})`;
+      c.fillRect(x + 12, y + 14, 16, 12);
+      c.fillStyle = `rgba(255,215,0,${pulse + 0.2})`;
+      c.fillRect(x + 14, y + 12, 12, 4);
+      c.fillStyle = '#fff';
+      c.fillRect(x + 18, y + 18, 4, 4);
+    }
+  }
+
+  /* ═══════════ UNITS (history snapshot) ═══════════ */
+  /* Renders units from a snapshot state without touching live unit objects */
+  _unitsFromSnap(snap) {
+    const fakeG = { sel: null, state: 0, _combatDef: null };
+    const allStates = [...snap.playerStates, ...snap.enemyStates];
+    for (const s of allStates) {
+      if (!s.alive) continue;
+      /* build a plain render proxy with historical position/hp */
+      const u = {
+        x: s.x, y: s.y,
+        hp: s.hp, maxHp: s.unit.maxHp,
+        hue: s.unit.hue, lbl: s.unit.lbl,
+        key: s.unit.key, isPlayer: s.unit.isPlayer,
+        done: s.moved && s.acted,
+      };
+      this._unit(u, fakeG);
+    }
+  }
+
+  /* ── History map overlay (dim tint + banner) ── */
+  _historyOverlay(g) {
+    const c = this.cx;
+    const mapW = COLS * TILE;
+    /* dim the entire map area */
+    c.fillStyle = 'rgba(0,0,30,0.38)';
+    c.fillRect(0, 0, mapW, CANVAS_H);
+    /* top banner */
+    c.fillStyle = 'rgba(5,10,40,0.90)';
+    c.fillRect(0, 0, mapW, 36);
+    c.strokeStyle = 'rgba(80,120,255,0.75)';
+    c.lineWidth = 1;
+    c.strokeRect(0, 0, mapW, 36);
+    c.fillStyle = '#8090ff';
+    c.font = `9px ${FONT}`;
+    c.textAlign = 'center';
+    const snap = g._historyView.snap;
+    c.fillText(`\u25C4 HISTORY  \u00B7  Turn ${snap.turn}`, mapW / 2, 23);
+  }
+
   /* ═══════════ UNITS ═══════════ */
   _units(g) {
     for (const u of [...g.players, ...g.enemies]) if (u.alive) this._unit(u, g);
@@ -544,16 +614,16 @@ export class Renderer {
     const LOG_BTM    = ENDTURN_Y - 8;
     const LOG_TOP    = LOG_BTM - 114;  // 114px panel: 14px header + 7 lines×13px + 11px pad
 
-    /* play log or rewind picker */
-    if (g._rewindMode) {
-      this._rewindPicker(g, sx, LOG_TOP, sw);
-    } else {
-      this._playLog(g, sx, LOG_TOP, sw);
-    }
+    /* play log */
+    this._playLog(g, sx, LOG_TOP, sw);
 
-    /* end-turn button */
-    const showEndBtn = g.phase === 'player' && g.state !== S_ACTION_MENU && g.state !== S_ATK_SELECT;
-    if (showEndBtn) this._endBtn(sx, ENDTURN_Y, sw);
+    /* end-turn button OR history controls */
+    if (g._historyView) {
+      this._historyControls(g, sx, ENDTURN_Y, sw);
+    } else {
+      const showEndBtn = g.phase === 'player' && g.state !== S_ACTION_MENU && g.state !== S_ATK_SELECT;
+      if (showEndBtn) this._endBtn(sx, ENDTURN_Y, sw);
+    }
     this._soundToggle(sx, SOUND_Y, sw);
   }
 
@@ -694,19 +764,21 @@ export class Renderer {
     const c = this.cx, x = sx + 10, w = sw - 20;
     const LOG_LINES = 7, LINE_H = 13;
     const panelH = 14 + LOG_LINES * LINE_H + 11;
+    const selectedEntry = g._historyView ? g._historyView.entry : null;
+    const hasRewind = g.rewindsLeft > 0 && g.snapshots && g.snapshots.length > 0;
 
     /* panel background */
     c.fillStyle = '#080810'; c.fillRect(x - 4, y, w + 8, panelH);
-    c.strokeStyle = '#202040'; c.lineWidth = 1; c.strokeRect(x - 4, y, w + 8, panelH);
+    c.strokeStyle = g._historyView ? '#4050c0' : '#202040';
+    c.lineWidth = 1; c.strokeRect(x - 4, y, w + 8, panelH);
 
     /* header */
     c.fillStyle = '#4040a0'; c.font = `6px ${FONT}`; c.textAlign = 'left';
     c.fillText('PLAY LOG', x, y + 10);
 
-    /* rewind button (in header, right side) */
-    const hasRewind = g.rewindsLeft > 0 && g.snapshots && g.snapshots.length > 0;
+    /* ↺ N charge counter (right side of header — informational) */
     const rbw = 46, rbh = 14, rbx = sx + sw - rbw - 8, rby = y + 1;
-    c.fillStyle = hasRewind ? (g._rewindMode ? '#1a4060' : '#0e1e2e') : '#0a0a0a';
+    c.fillStyle = hasRewind ? '#0e1e2e' : '#0a0a0a';
     c.fillRect(rbx, rby, rbw, rbh);
     c.strokeStyle = hasRewind ? '#30b0e0' : '#252530';
     c.lineWidth = 1; c.strokeRect(rbx, rby, rbw, rbh);
@@ -716,60 +788,52 @@ export class Renderer {
     c.textAlign = 'left';
     this._rewindBtnBounds = { x: rbx, y: rby, w: rbw, h: rbh };
 
-    /* log entries — most recent at bottom */
-    const entries = g.playLog ? g.playLog.slice(-LOG_LINES) : [];
+    /* log entries — most recent at bottom, each is a clickable hit area */
+    this._logEntryBounds = [];
+    const allEntries = g.playLog || [];
+    const entries = allEntries.slice(-LOG_LINES);
     let ey = y + 18;
     for (const entry of entries) {
-      /* truncate to fit panel width using monospace estimate */
+      const bx = x - 4, bw = w + 8, bh = LINE_H;
+      const isSelected = entry === selectedEntry;
+      const hasSnap    = !!entry.snap;
+
+      /* highlight selected entry */
+      if (isSelected) {
+        c.fillStyle = 'rgba(60,80,200,0.35)';
+        c.fillRect(bx, ey - 9, bw, bh);
+        c.strokeStyle = 'rgba(100,140,255,0.6)';
+        c.lineWidth = 1;
+        c.strokeRect(bx, ey - 9, bw, bh);
+      } else if (hasSnap) {
+        /* subtle hover affordance for clickable entries */
+        c.fillStyle = 'rgba(30,30,80,0.20)';
+        c.fillRect(bx, ey - 9, bw, bh);
+      }
+
+      /* truncate to fit panel width */
       let txt = entry.text;
       const maxChars = Math.floor((w - 2) / 4.2);
       if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '\u2026';
-      c.fillStyle = entry.color;
+
+      c.fillStyle = isSelected ? '#c0d0ff' : entry.color;
       c.font = '7px monospace';
       c.fillText(txt, x, ey);
+
+      /* small ↺ indicator on entries that have a rewindable snapshot */
+      if (hasSnap && !isSelected) {
+        c.fillStyle = '#30607080';
+        c.font = `5px ${FONT}`;
+        c.textAlign = 'right';
+        c.fillText('\u21BA', sx + sw - 12, ey);
+        c.textAlign = 'left';
+      }
+
+      this._logEntryBounds.push({ x: bx, y: ey - 9, w: bw, h: bh, entry });
       ey += LINE_H;
     }
   }
 
-  /* rewind picker — shown when _rewindMode is true */
-  _rewindPicker(g, sx, y, sw) {
-    const c = this.cx, x = sx + 10, w = sw - 20;
-    const snaps = g.snapshots || [];
-
-    /* panel background */
-    c.fillStyle = '#08101a'; c.fillRect(x - 4, y, w + 8, 114);
-    c.strokeStyle = '#30b0e0'; c.lineWidth = 1; c.strokeRect(x - 4, y, w + 8, 114);
-
-    c.fillStyle = '#40d0f0'; c.font = `6px ${FONT}`; c.textAlign = 'center';
-    c.fillText(`REWIND TO TURN  (\u21BA ${g.rewindsLeft} left)`, sx + sw / 2, y + 11);
-
-    /* cancel button */
-    const cbx = x - 4, cbw = w + 8, cbh = 16, cby = y + 94;
-    c.fillStyle = '#1a1a2a'; c.fillRect(cbx, cby, cbw, cbh);
-    c.strokeStyle = '#404060'; c.lineWidth = 1; c.strokeRect(cbx, cby, cbw, cbh);
-    c.fillStyle = '#808090'; c.font = `6px ${FONT}`; c.textAlign = 'center';
-    c.fillText('CANCEL', sx + sw / 2, cby + 11);
-
-    /* snapshot list — most recent at top, up to 5 shown */
-    this._snapshotBounds = [];
-    const visible = snaps.slice(-5).reverse();
-    let sy = y + 20;
-    for (const snap of visible) {
-      const bh = 13, bx = x - 4, bw = w + 8;
-      const alive = snap.playerStates ? snap.playerStates.filter(s => s.alive).length : '?';
-      const eAlive = snap.enemyStates ? snap.enemyStates.filter(s => s.alive).length : '?';
-      const hot = false;
-      c.fillStyle = '#0d1e30'; c.fillRect(bx, sy - 10, bw, bh);
-      c.strokeStyle = '#204050'; c.lineWidth = 1; c.strokeRect(bx, sy - 10, bw, bh);
-      c.fillStyle = '#80d0ff'; c.font = `6px ${FONT}`; c.textAlign = 'left';
-      c.fillText(`\u25C4 Turn ${snap.turn}`, x, sy);
-      c.fillStyle = '#607080'; c.textAlign = 'right';
-      c.fillText(`${alive}v${eAlive}`, sx + sw - 12, sy);
-      this._snapshotBounds.push({ x: bx, y: sy - 10, w: bw, h: bh, snap });
-      sy += 14;
-    }
-    c.textAlign = 'left';
-  }
 
   _endBtn(sx, y, sw) {
     const c = this.cx, bx = sx + 10, bw = sw - 20, bh = 36;
@@ -778,6 +842,33 @@ export class Renderer {
     c.fillStyle = '#40d0f0'; c.font = `9px ${FONT}`; c.textAlign = 'center';
     c.fillText('END TURN', sx + sw / 2, y + 22);
     this._btn = { x: bx, y, w: bw, h: bh };
+  }
+
+  /* ── History view controls (replaces END TURN while browsing history) ── */
+  _historyControls(g, sx, y, sw) {
+    const c = this.cx, bx = sx + 10, bw = sw - 20;
+    const hasCharge = g.rewindsLeft > 0;
+
+    /* CONTINUE FROM HERE button (top, 20px tall) */
+    c.fillStyle = hasCharge ? '#0d2a38' : '#101010';
+    c.fillRect(bx, y, bw, 20);
+    c.strokeStyle = hasCharge ? '#20a0c0' : '#252530';
+    c.lineWidth = 2; c.strokeRect(bx, y, bw, 20);
+    c.fillStyle = hasCharge ? '#40d0f0' : '#404050';
+    c.font = `7px ${FONT}`; c.textAlign = 'center';
+    c.fillText(`CONTINUE  (\u21BA ${g.rewindsLeft} left)`, sx + sw / 2, y + 13);
+    this._histContinueBtn = { x: bx, y, w: bw, h: 20 };
+
+    /* CANCEL button (below, 20px tall, with 6px gap) */
+    const cy2 = y + 26;
+    c.fillStyle = '#141420';
+    c.fillRect(bx, cy2, bw, 20);
+    c.strokeStyle = '#404060';
+    c.lineWidth = 1; c.strokeRect(bx, cy2, bw, 20);
+    c.fillStyle = '#8080a0';
+    c.font = `7px ${FONT}`; c.textAlign = 'center';
+    c.fillText('CANCEL REWIND', sx + sw / 2, cy2 + 13);
+    this._histCancelBtn = { x: bx, y: cy2, w: bw, h: 20 };
   }
 
   _soundToggle(sx, y, sw) {

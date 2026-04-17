@@ -81,10 +81,11 @@ class Game {
     this.droppedItems = [];  // [{item, x, y}]
 
     /* play log */
-    this.playLog     = [];   // [{text, color}] — capped at 80 entries
+    this.playLog     = [];   // [{text, color, snap}] — capped at 80 entries
     this.snapshots   = [];   // game-state snapshots for rewind
     this.rewindsLeft = 3;    // charges remaining this level
-    this._rewindMode = false;// true while rewind picker is open
+    this._historyView = null; // {snap, entry} when browsing history, null otherwise
+    this._latestSnap  = null; // most recent snapshot — attached to log entries
     this._allEnemies = [];   // all enemies spawned this level (incl. dead) for rewind
 
     /* combat animation */
@@ -117,7 +118,7 @@ class Game {
   /* ═══════════ PLAY LOG & REWIND ═══════════ */
 
   _addLog(text, color = '#a0a0c0') {
-    this.playLog.push({ text, color });
+    this.playLog.push({ text, color, snap: this._latestSnap });
     if (this.playLog.length > 80) this.playLog.shift();
   }
 
@@ -136,7 +137,8 @@ class Game {
       enemyStates:  this._allEnemies.map(snapUnit),
       droppedItems: this.droppedItems.map(d => ({ item: { ...d.item }, x: d.x, y: d.y })),
     });
-    if (this.snapshots.length > 8) this.snapshots.shift();
+    if (this.snapshots.length > 10) this.snapshots.shift();
+    this._latestSnap = this.snapshots[this.snapshots.length - 1];
   }
 
   _restoreSnapshot(snap) {
@@ -165,7 +167,8 @@ class Game {
     this._eActions = null; this._eIdx = 0; this._eTimer = 0;
     this._enemyCombatPending = false;
     this._combatLog = []; this._combatIdx = 0; this._combatTimer = 0;
-    this._rewindMode = false;
+    this._historyView = null;
+    this._latestSnap = this.snapshots.length ? this.snapshots[this.snapshots.length - 1] : null;
     this._deselect();
 
     this.rewindsLeft--;
@@ -224,12 +227,13 @@ class Game {
     if (this.map.playerSpawns[0]) this.cur = { ...this.map.playerSpawns[0] };
 
     /* reset log and rewind state for new level */
-    this.snapshots   = [];
-    this.rewindsLeft = 3;
-    this._rewindMode = false;
+    this.snapshots    = [];
+    this.rewindsLeft  = 3;
+    this._historyView = null;
+    this._latestSnap  = null;
+    this._takeSnapshot(); // Turn 1 initial state — sets _latestSnap before first log entry
     const levelLabel = this.floor === 0 ? 'Tutorial' : `Level ${this.floor}`;
     this._addLog(`── ${levelLabel} begins ──`, '#ffd700');
-    this._takeSnapshot(); // Turn 1 initial state
 
     /* start tutorial on floor 1 */
     if (this.floor === 0) {
@@ -272,29 +276,49 @@ class Game {
     const sb = this.ren.soundBtn;
     if (sb && px >= sb.x && px <= sb.x + sb.w && py >= sb.y && py <= sb.y + sb.h) { toggleMute(); return; }
 
-    /* rewind button */
-    const rwb = this.ren._rewindBtnBounds;
-    if (rwb && px >= rwb.x && px <= rwb.x + rwb.w && py >= rwb.y && py <= rwb.y + rwb.h) {
-      if (this.rewindsLeft > 0 && this.snapshots.length > 0 &&
-          (this.state === S_IDLE || this.state === S_LOSE)) {
-        this._rewindMode = !this._rewindMode;
-        SFX.menuBack();
+    /* ── history view intercepts all clicks ── */
+    if (this._historyView) {
+      /* CONTINUE button — restore snapshot, costs a charge */
+      const cb = this.ren._histContinueBtn;
+      if (cb && px >= cb.x && px <= cb.x + cb.w && py >= cb.y && py <= cb.y + cb.h) {
+        if (this.rewindsLeft > 0) {
+          this._restoreSnapshot(this._historyView.snap);
+        }
+        return;
       }
-      return;
-    }
-    /* snapshot entry selection when rewind picker is open */
-    if (this._rewindMode) {
-      const snapBounds = this.ren._snapshotBounds;
-      if (snapBounds) {
-        for (const b of snapBounds) {
-          if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) {
-            this._restoreSnapshot(b.snap);
+      /* CANCEL button — free */
+      const xb = this.ren._histCancelBtn;
+      if (xb && px >= xb.x && px <= xb.x + xb.w && py >= xb.y && py <= xb.y + xb.h) {
+        this._historyView = null;
+        SFX.menuBack();
+        return;
+      }
+      /* clicking a different log entry changes the preview (still free) */
+      const leb = this.ren._logEntryBounds;
+      if (leb) {
+        for (const b of leb) {
+          if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h && b.entry && b.entry.snap) {
+            this._historyView = { snap: b.entry.snap, entry: b.entry };
+            SFX.select();
             return;
           }
         }
       }
-      this._rewindMode = false;
+      /* click outside log/buttons — cancel history view */
+      this._historyView = null;
+      SFX.menuBack();
       return;
+    }
+    /* ── log entry click — enter history view (free) ── */
+    const leb = this.ren._logEntryBounds;
+    if (leb && (this.state === S_IDLE || this.state === S_LOSE || this.state === S_WIN)) {
+      for (const b of leb) {
+        if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h && b.entry && b.entry.snap) {
+          this._historyView = { snap: b.entry.snap, entry: b.entry };
+          SFX.select();
+          return;
+        }
+      }
     }
 
     if (this.state === S_TITLE) {
@@ -513,7 +537,7 @@ class Game {
 
   /* ── cancel (right-click / Escape) ── */
   _cancel() {
-    if (this._rewindMode) { this._rewindMode = false; return; }
+    if (this._historyView) { this._historyView = null; SFX.menuBack(); return; }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
         this.state === S_WIN || this.state === S_LOSE || this.state === S_TITLE ||
         this.state === S_TRANS_OUT || this.state === S_TRANS_IN ||
@@ -702,9 +726,9 @@ class Game {
     }
     this.enemies.forEach(e => e.reset());
 
-    /* log & snapshot at start of each player turn */
-    this._addLog(`── Turn ${this.turn} ──`, '#707090');
+    /* snapshot first so the turn-header log entry carries a valid snap reference */
     this._takeSnapshot();
+    this._addLog(`── Turn ${this.turn} ──`, '#707090');
   }
 
   /* ═══════════ LEVEL TRANSITION ═══════════ */
