@@ -587,14 +587,32 @@ class Game {
       for (const u of [...this.enemies, ...this.players]) {
         if (!u.alive) this._addLog(`${u.name} falls!`, '#ffd700');
       }
-      /* drop items from dead units */
+      /* handle items from dead units */
       let itemsDropped = false;
-      for (const u of [...this.enemies, ...this.players]) {
-        if (!u.alive && u.inventory.length > 0) {
-          for (const item of u.inventory) {
-            this.droppedItems.push({ item: { ...item }, x: u.x, y: u.y });
+      /* dead enemies — auto-loot to the killer if they have inventory space */
+      const killer = this._combatAtk;
+      for (const e of this.enemies) {
+        if (!e.alive && e.inventory.length > 0) {
+          for (const item of e.inventory) {
+            if (killer && killer.isPlayer && killer.inventory.length < MAX_INVENTORY) {
+              killer.inventory.push({ ...item });
+              this._addLog(`${killer.name} loots ${item.name}!`, '#c0ff80');
+            } else {
+              /* killer's inventory full — leave on ground */
+              this.droppedItems.push({ item: { ...item }, x: e.x, y: e.y });
+              itemsDropped = true;
+            }
           }
-          u.inventory = [];
+          e.inventory = [];
+        }
+      }
+      /* dead players — always drop items to the field */
+      for (const p of this.players) {
+        if (!p.alive && p.inventory.length > 0) {
+          for (const item of p.inventory) {
+            this.droppedItems.push({ item: { ...item }, x: p.x, y: p.y });
+          }
+          p.inventory = [];
           itemsDropped = true;
         }
       }

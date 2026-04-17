@@ -26,7 +26,16 @@
       "Bash(node --check \"C:\\\\Users\\\\palti\\\\git\\\\trpg-roguelike\\\\js\\\\game.js\")",
       "Bash(node --check \"C:\\\\Users\\\\palti\\\\git\\\\trpg-roguelike\\\\js\\\\units.js\")",
       "Bash(node --check \"C:\\\\Users\\\\palti\\\\git\\\\trpg-roguelike\\\\js\\\\renderer.js\")",
-      "Bash(node -e ':*)"
+      "Bash(node -e ':*)",
+      "Bash(curl -s http://localhost:8080/)",
+      "Bash(curl -sv http://localhost:8080/)",
+      "Bash(node --input-type=module)",
+      "Read(//mnt/c/Users/palti/git/**)",
+      "Bash(node --input-type=module --experimental-vm-modules)",
+      "Bash(node -e \"require\\('fs'\\).readFileSync\\('C:/Users/palti/git/trpg-roguelike/js/game.js', 'utf8'\\)\")",
+      "Bash(node --check \"C:/Users/palti/git/trpg-roguelike/js/game.js\")",
+      "Bash(node --check \"C:/Users/palti/git/trpg-roguelike/js/renderer.js\")",
+      "Bash(node --check \"C:/Users/palti/git/trpg-roguelike/js/units.js\")"
     ]
   }
 }
