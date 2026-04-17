@@ -18,19 +18,21 @@ import { TouchController } from './touch.js';
    Teaches through play — prompts appear at the moment
    the player needs the information, not before. */
 const TUT = {
-  start:     'Click a blue unit to select it.',
-  selected:  'Blue tiles = move range. Click one to move!',
-  moved:     'Choose ATTACK if an enemy is nearby, or WAIT.',
-  atk_mode:  'Hover enemies to see the Combat Forecast!',
-  first_kill:'Sword beats Axe! Axe beats Lance! Lance beats Sword!',
-  terrain:   'Forests: DEF+1 AVO+15. Stand on them for cover!',
-  fort:      'Forts: DEF+2 AVO+20 and heal 10% HP each turn!',
-  end_turn:  'All units done? Click END TURN on the right.',
-  enemy_go:  'Enemy phase! They follow the same combat rules.',
-  ranged:    'Archers: range 2. Mages: range 1-2. Use them wisely!',
-  items:     'Each unit has a Potion! Use ITEM to heal in battle.',
-  item_drop: 'Enemies drop loot! Move onto it to pick it up.',
-  pickup:    'Item picked up! Open ITEM in the action menu to use it.',
+  start:       'Click a blue unit to select it.',
+  selected:    'Blue tiles = move range. Click one to move!',
+  moved:       'Choose ATTACK if an enemy is nearby, or WAIT.',
+  atk_mode:    'Hover enemies to see the Combat Forecast!',
+  first_kill:  'Sword beats Axe! Axe beats Lance! Lance beats Sword!',
+  terrain:     'Forests: DEF+1 AVO+15. Stand on them for cover!',
+  fort:        'Forts: DEF+2 AVO+20 and heal 10% HP each turn!',
+  end_turn:    'All units done? Click END TURN on the right.',
+  enemy_go:    'Enemy phase! They follow the same combat rules.',
+  ranged:      'Archers: range 2. Mages: range 1-2. Use them wisely!',
+  items:       'Each unit has a Potion! Use ITEM to heal in battle.',
+  item_drop:   'Enemies drop loot! Move onto it to pick it up.',
+  pickup:      'Item picked up! Open ITEM in the action menu to use it.',
+  log_intro:   'PLAY LOG (bottom right) records every action. Click any entry to view that moment!',
+  rewind_how:  'Use \u2191\u2193 arrows to browse history. CONTINUE restores the game — costs 1 \u21BA charge.',
 };
 
 class Game {
@@ -341,6 +343,7 @@ class Game {
       for (const b of leb) {
         if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h && b.entry && b.entry.snap) {
           this._historyView = { snap: b.entry.snap, entry: b.entry };
+          this._tutShow('rewind_how');
           SFX.select();
           return;
         }
@@ -608,6 +611,7 @@ class Game {
 
     const newEntry = log[newIdx];
     this._historyView = { snap: newEntry.snap, entry: newEntry };
+    this._tutShow('rewind_how');
     SFX.select();
 
     /* auto-scroll so the selected entry stays inside the visible window */
@@ -833,6 +837,9 @@ class Game {
     /* snapshot first so the turn-header log entry carries a valid snap reference */
     this._takeSnapshot();
     this._addLog(`── Turn ${this.turn} ──`, '#707090');
+
+    /* turn 2: player has seen the enemy phase — now introduce the play log */
+    if (this.turn === 2) this._tutShow('log_intro');
   }
 
   /* ═══════════ LEVEL TRANSITION ═══════════ */
