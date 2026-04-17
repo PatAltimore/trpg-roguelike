@@ -6,7 +6,7 @@ import {
   ITEMS, MAX_INVENTORY,
 } from './constants.js';
 import { GameMap, reachable }    from './map.js';
-import { spawnParty, spawnEnemies, DRAFT_POOL, CLASS_INFO, Unit } from './units.js';
+import { spawnParty, spawnEnemies, DRAFT_POOL, CLASS_INFO, Unit, resetNames } from './units.js';
 import { resolve, forecast, canCounter, inRange } from './combat.js';
 import { planEnemyTurn }         from './ai.js';
 import { Renderer }              from './renderer.js';
@@ -352,17 +352,17 @@ class Game {
       if (btns) {
         const hit = (b) => b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
         if (hit(btns.tutorial)) {
-          SFX.titleMelody(); this.difficulty = 'easy'; this.floor = 0;
+          SFX.titleMelody(); resetNames(); this.difficulty = 'easy'; this.floor = 0;
           this.roster = ['LORD','FIGHTER','MAGE','ARCHER']; this._startLevel(); return;
         }
         if (hit(btns.easy)) {
-          SFX.titleMelody(); this.difficulty = 'easy'; this.floor = 1; this._beginDraft(); return;
+          SFX.titleMelody(); resetNames(); this.difficulty = 'easy'; this.floor = 1; this._beginDraft(); return;
         }
         if (hit(btns.medium)) {
-          SFX.titleMelody(); this.difficulty = 'medium'; this.floor = 1; this._beginDraft(); return;
+          SFX.titleMelody(); resetNames(); this.difficulty = 'medium'; this.floor = 1; this._beginDraft(); return;
         }
         if (hit(btns.hard)) {
-          SFX.titleMelody(); this.difficulty = 'hard'; this.floor = 1; this._beginDraft(); return;
+          SFX.titleMelody(); resetNames(); this.difficulty = 'hard'; this.floor = 1; this._beginDraft(); return;
         }
       }
       return;
@@ -700,7 +700,7 @@ class Game {
           entry.src.isPlayer ? '#c0c0ff' : '#ffc0c0');
       } else {
         SFX.hit();
-        this._addLog(`${entry.src.name} → ${entry.tgt.name}: ${entry.dmg} dmg`,
+        this._addLog(`${entry.src.name} 💥 ${entry.tgt.name}: ${entry.dmg} dmg`,
           entry.src.isPlayer ? '#8080ff' : '#ff8080');
       }
     }

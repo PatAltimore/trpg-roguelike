@@ -2,16 +2,50 @@ import { W_SWORD, W_AXE, W_LANCE, W_BOW, W_FIRE, W_THUNDER, W_DARK, W_STAFF, W_J
          ITEMS, MAX_INVENTORY } from './constants.js';
 
 /* ── Two-word unit name pools ── */
-const P_ADJ  = ['Brave','Swift','Bold','Keen','Iron','Wise','Noble','Deft','Stern','True','Valiant','Steady'];
-const P_NAME = ['Aldric','Lyra','Kael','Serra','Dorn','Finn','Mira','Rael','Zara','Cael','Tarn','Vel'];
-const E_ADJ  = ['Grim','Dark','Fell','Foul','Vile','Cruel','Bleak','Dread','Sour','Dire','Feral','Wrath'];
-const E_NAME = ['Mors','Gruk','Varn','Thal','Krag','Brin','Hex','Reth','Skar','Druk','Mal','Var'];
+
+/* Humorous adjectives — heroes sound gallant but slightly ridiculous */
+const P_ADJ = [
+  'Wobbly','Snoring','Pudgy','Timid','Clumsy','Soggy','Grumpy','Itchy',
+  'Pompous','Lanky','Squinting','Fidgety','Bumbling','Drowsy','Portly','Nervous',
+  'Sneezing','Hiccuping','Balding','Gassy','Forgetful','Twitchy','Lopsided','Rotund',
+  'Mumbling','Freckled','Squabbling','Dizzy','Wheezing','Befuddled',
+];
+
+/* Humorous adjectives — villains sound menacing but also a bit absurd */
+const E_ADJ = [
+  'Festering','Rancid','Malodorous','Bloated','Crusty','Mangy','Pungent','Grimy',
+  'Sneering','Splotchy','Toadish','Greasy','Soggy','Mouldy','Wretched','Quivering',
+  'Gurgling','Dribbling','Cackling','Flatulent','Belching','Scabby','Lumbering','Snivelling',
+  'Wheezing','Lurching','Squelching','Gibbering','Shambling','Blundering',
+];
+
+/* Medieval-ish given names — shared pool, unisex */
+const ALL_NAMES = [
+  'Aldric','Morrigan','Caspian','Isolde','Theron','Elspeth','Gideon','Rowena',
+  'Leofric','Seraphine','Oswald','Thessaly','Cormac','Vesper','Aldous','Sigrid',
+  'Bramwell','Ondine','Fennick','Calista','Gareth','Nimue','Bertram','Lysander',
+  'Edwina','Torben','Celestine','Wolfric','Amaryllis','Godfrey','Perdita','Hawthorn',
+  'Eulalia','Merrick','Saoirse','Dunstan','Belphoebe','Radulf','Thessaly','Godwin',
+  'Orlaith','Crispin','Elowen','Baldric','Sophronia','Wulfstan','Araminta','Edric',
+];
+
+const _usedNames = new Set();
 
 function genName(id, isPlayer, key) {
   if (key === 'WARLORD') return 'Dark Sovereign';
-  const adj  = isPlayer ? P_ADJ  : E_ADJ;
-  const gn   = isPlayer ? P_NAME : E_NAME;
-  return `${adj[id % adj.length]} ${gn[id % gn.length]}`;
+  const adjs = isPlayer ? P_ADJ : E_ADJ;
+  const adj  = adjs[Math.floor(Math.random() * adjs.length)];
+
+  /* pick a given name not yet in use this session */
+  let name;
+  const pool = ALL_NAMES.slice();
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  name = pool.find(n => !_usedNames.has(n)) ?? pool[0]; // fallback: reuse if pool exhausted
+  _usedNames.add(name);
+  return `${adj} ${name}`;
 }
 
 export const W_DAGGER = { name: 'Dagger', mt: 3, hit: 95, rng: [1,1], magic: false, tri: 'sword' };
@@ -84,6 +118,7 @@ const ENEMY_CLASSES  = ['SOLDIER','BRIGAND','DARK_MAGE','E_ARCHER'];
 /* classes available for draft (Lord always included) */
 export const DRAFT_POOL = ['FIGHTER','MAGE','ARCHER','HEALER','CAVALIER','KNIGHT','THIEF'];
 export const CLASS_INFO = CLASSES; /* expose for UI descriptions */
+export function resetNames() { _usedNames.clear(); } /* call at game start so names are fresh */
 
 /*  Difficulty balance table
     ───────────────────────────────────────────────────────
