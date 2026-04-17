@@ -53,15 +53,28 @@ export class TouchController {
     canvas.addEventListener('touchend',    e => this._onTouchEnd(e),   { passive: false });
     canvas.addEventListener('touchcancel', e => this._onTouchEnd(e),   { passive: false });
 
-    /* initial fit */
-    this._fitToScreen();
+    /* initial fit — defer two animation frames so the browser has finished
+       its first layout pass and mobile viewport dimensions are settled */
+    requestAnimationFrame(() => requestAnimationFrame(() => this._fitToScreen()));
+
+    /* re-fit on window resize (orientation change, desktop resize) */
     window.addEventListener('resize', () => this._fitToScreen());
+
+    /* re-fit on visualViewport resize — catches mobile address-bar
+       show/hide and keyboard pop-up which window.resize misses */
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => this._fitToScreen());
+    }
   }
 
   /* ── Fit the canvas to the screen on load / resize ── */
   _fitToScreen() {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    /* prefer visualViewport dimensions — on mobile these reflect the true
+       visible area rather than the larger CSS viewport (which includes
+       the browser chrome area that may not actually be visible) */
+    const vp = window.visualViewport;
+    const vw = vp ? vp.width  : window.innerWidth;
+    const vh = vp ? vp.height : window.innerHeight;
     const cw = this.cv.width;
     const ch = this.cv.height;
     this.zoom = Math.min(vw / cw, vh / ch);
@@ -97,8 +110,9 @@ export class TouchController {
 
   /* ── Clamp pan so the canvas stays reachable ── */
   _clampPan() {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
+    const vp = window.visualViewport;
+    const vw = vp ? vp.width  : window.innerWidth;
+    const vh = vp ? vp.height : window.innerHeight;
     const cw = this.cv.width * this.zoom;
     const ch = this.cv.height * this.zoom;
 
