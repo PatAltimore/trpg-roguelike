@@ -31,7 +31,7 @@ const TUT = {
   items:       'Each unit has a Potion! Use ITEM to heal in battle.',
   item_drop:   'Enemies drop loot! Move onto it to pick it up.',
   pickup:      'Item picked up! Open ITEM in the action menu to use it.',
-  log_intro:   'PLAY LOG (bottom right) records every action. Click any entry to view that moment!',
+  log_intro:   'PLAY LOG records the action. Select an entry to view or rewind history!',
   rewind_how:  'Use \u2191\u2193 arrows to browse history. CONTINUE restores the game — costs 1 \u21BA charge.',
 };
 

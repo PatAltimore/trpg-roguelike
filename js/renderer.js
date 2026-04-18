@@ -617,25 +617,29 @@ export class Renderer {
     const u = g.sel || this._unitAt(g, g.cur);
     if (u) y = this._unitPanel(u, px, y, sw - 20);
 
-    /* terrain */
-    if (g.cur) y = this._terrainPanel(g, px, y, sw - 20);
-
-    /* store sidebar content bottom for action menu positioning */
-    this._sidebarContentY = y;
-
-    /* combat / heal / steal preview — only draw if it fits before the fixed bottom zone */
-    const BOTTOM_ZONE_TOP = CANVAS_H - 215; // reserve space for log (123px) + controls + gaps
-    if (g.preview && y + 10 < BOTTOM_ZONE_TOP) {
-      if (g.preview.heal) { this._healPreview(g.preview, sx, y, sw); }
-      else if (g.preview.steal) { this._stealPreview(g.preview, sx, y, sw); }
-      else { this._combatPreview(g.preview, sx, y, sw); }
-    }
-
-    /* ── fixed bottom section ── */
+    /* ── fixed layout constants (computed early so the preview can reference LOG_TOP) ── */
     const SOUND_Y    = CANVAS_H - 34;
     const ENDTURN_Y  = SOUND_Y - 46;
     const LOG_BTM    = ENDTURN_Y - 8;
     const LOG_TOP    = LOG_BTM - 123;  // 123px panel: 14px header + 7 lines×14px + 11px pad
+
+    /* terrain — suppressed while a combat/heal/steal forecast is active so the
+       forecast always fits between the unit panel and the log without clipping */
+    if (g.cur && !g.preview) y = this._terrainPanel(g, px, y, sw - 20);
+
+    /* store sidebar content bottom for action menu positioning */
+    this._sidebarContentY = y;
+
+    /* combat / heal / steal preview — pinned to sit just above the log panel */
+    if (g.preview) {
+      const previewH = g.preview.heal ? 70 : g.preview.steal ? 70 : 120;
+      const previewY = Math.min(y, LOG_TOP - previewH - 4);
+      if (previewY > 50) {
+        if (g.preview.heal) { this._healPreview(g.preview, sx, previewY, sw); }
+        else if (g.preview.steal) { this._stealPreview(g.preview, sx, previewY, sw); }
+        else { this._combatPreview(g.preview, sx, previewY, sw); }
+      }
+    }
 
     /* play log */
     this._playLog(g, sx, LOG_TOP, sw);
