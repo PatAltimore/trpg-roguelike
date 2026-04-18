@@ -67,8 +67,8 @@ export class GameMap {
       { x: 11, y: 8, w: 7, h: 4 },
     ];
     this.playerSpawns = [
-      { x: 2, y: 2 }, { x: 3, y: 2 },
-      { x: 2, y: 3 }, { x: 3, y: 3 },
+      { x: 2, y: 2 }, { x: 3, y: 2 }, { x: 4, y: 2 },
+      { x: 2, y: 3 }, { x: 3, y: 3 }, { x: 4, y: 3 },
     ];
     this.enemySpawns = [
       { x: 16, y: 3, cls: 'BRIGAND' },
@@ -319,14 +319,16 @@ export class GameMap {
   _placeSpawns() {
     if (this.rooms.length === 0) return;
 
-    /* Player spawns in safe start room */
+    /* Player spawns in safe start room — scan row-by-row until we have 8 positions */
     const start = this.rooms[0];
-    for (let dy = 0; dy < Math.min(2, start.h); dy++)
-      for (let dx = 0; dx < Math.min(2, start.w); dx++) {
-        const sx = start.x + dx + 1 < start.x + start.w ? start.x + dx + 1 : start.x + dx;
-        const sy = start.y + dy + 1 < start.y + start.h ? start.y + dy + 1 : start.y + dy;
+    outer:
+    for (let dy = 0; dy < start.h; dy++) {
+      for (let dx = 0; dx < start.w; dx++) {
+        if (this.playerSpawns.length >= 8) break outer;
+        const sx = start.x + dx, sy = start.y + dy;
         if (this.passable(sx, sy)) this.playerSpawns.push({ x: sx, y: sy });
       }
+    }
     if (!this.playerSpawns.length)
       this.playerSpawns.push({ x: start.x, y: start.y });
 

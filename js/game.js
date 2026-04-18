@@ -1205,9 +1205,11 @@ class Game {
 
         if (opt.action === 'recruit') {
           const spawns = this.map.playerSpawns;
-          const spIdx = this.players.length % spawns.length;
+          /* find the first spawn position not already occupied by a live unit */
+          const taken = new Set(this.players.map(p => `${p.x},${p.y}`));
+          let sp = spawns.find(s => !taken.has(`${s.x},${s.y}`)) ?? spawns[spawns.length - 1];
           const lv = Math.max(1, this.floor);
-          const u = new Unit(opt.cls, spawns[spIdx].x, spawns[spIdx].y, true, lv);
+          const u = new Unit(opt.cls, sp.x, sp.y, true, lv);
           this.players.push(u);
           /* add to roster so they persist across floors */
           if (this.roster) this.roster.push(opt.cls);

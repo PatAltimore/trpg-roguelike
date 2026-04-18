@@ -131,8 +131,20 @@ export function resetNames() { _usedNames.clear(); } /* call at game start so na
 
 export function spawnParty(spawns, floor, existing, diff = 'easy', roster = null) {
   if (existing && existing.length) {
+    /* build a set of occupied positions so every unit lands on a unique tile */
+    const occupied = new Set();
     existing.forEach((u, i) => {
-      const p = spawns[i % spawns.length];
+      let p = spawns[Math.min(i, spawns.length - 1)];
+      /* if this spawn is already taken (shouldn't happen with enough spawns, but be safe),
+         search adjacent tiles until we find a free one */
+      if (occupied.has(`${p.x},${p.y}`)) {
+        const offsets = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,1],[1,-1],[-1,-1]];
+        for (const [ox, oy] of offsets) {
+          const nx = p.x + ox, ny = p.y + oy;
+          if (!occupied.has(`${nx},${ny}`)) { p = { x: nx, y: ny }; break; }
+        }
+      }
+      occupied.add(`${p.x},${p.y}`);
       u.x = p.x; u.y = p.y;
       u.alive = true;
       u.reset();
