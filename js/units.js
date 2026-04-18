@@ -118,7 +118,8 @@ const ENEMY_CLASSES  = ['SOLDIER','BRIGAND','DARK_MAGE','E_ARCHER'];
 /* classes available for draft (Lord always included) */
 export const DRAFT_POOL = ['FIGHTER','MAGE','ARCHER','HEALER','CAVALIER','KNIGHT','THIEF'];
 export const CLASS_INFO = CLASSES; /* expose for UI descriptions */
-export function resetNames() { _usedNames.clear(); } /* call at game start so names are fresh */
+export function resetNames()    { _usedNames.clear(); } /* call at game start so names are fresh */
+export function markNamesUsed(names) { for (const n of names) _usedNames.add(n); }
 
 /*  Difficulty balance table
     ───────────────────────────────────────────────────────

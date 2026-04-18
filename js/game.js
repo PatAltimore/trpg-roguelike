@@ -6,7 +6,7 @@ import {
   ITEMS, MAX_INVENTORY,
 } from './constants.js';
 import { GameMap, reachable }    from './map.js';
-import { spawnParty, spawnEnemies, DRAFT_POOL, CLASS_INFO, Unit, resetNames } from './units.js';
+import { spawnParty, spawnEnemies, DRAFT_POOL, CLASS_INFO, Unit, resetNames, markNamesUsed } from './units.js';
 import { resolve, forecast, canCounter, inRange } from './combat.js';
 import { planEnemyTurn }         from './ai.js';
 import { Renderer }              from './renderer.js';
@@ -90,6 +90,8 @@ class Game {
     this._latestSnap  = null; // most recent snapshot — attached to log entries
     this._logScroll   = 0;   // 0 = show latest; positive = show older entries
     this._allEnemies = [];   // all enemies spawned this level (incl. dead) for rewind
+    this._atkConfirm  = null; // {atk, def, af, df} — confirm overlay before firing combat
+    this._hasSave = (() => { try { return !!localStorage.getItem('emblemtactics_save'); } catch (e) { return false; } })();
 
     /* combat animation */
     this._combatLog = [];
@@ -244,6 +246,7 @@ class Game {
     this.snapshots    = [];
     this.rewindsLeft  = 3;
     this._historyView = null;
+    this._atkConfirm  = null;
     this._latestSnap  = null;
     this._logScroll   = 0;
     this._takeSnapshot(); // Turn 1 initial state — sets _latestSnap before first log entry
@@ -257,6 +260,9 @@ class Game {
     } else {
       this.tut = null;
     }
+
+    /* auto-save at the start of each non-tutorial level */
+    if (this.floor >= 1) this._saveGame();
   }
 
   /* ═══════════ INPUT ═══════════ */
@@ -324,6 +330,24 @@ class Game {
       SFX.menuBack();
       return;
     }
+    /* ── attack confirm overlay intercepts all clicks ── */
+    if (this._atkConfirm) {
+      const ab = this.ren._atkConfirmAttackBtn;
+      const xb = this.ren._atkConfirmCancelBtn;
+      if (ab && px >= ab.x && px <= ab.x + ab.w && py >= ab.y && py <= ab.y + ab.h) {
+        const { atk, def } = this._atkConfirm;
+        this._atkConfirm = null;
+        this._doCombat(atk, def);
+        return;
+      }
+      if (xb && px >= xb.x && px <= xb.x + xb.w && py >= xb.y && py <= xb.y + xb.h) {
+        this._atkConfirm = null;
+        SFX.menuBack();
+        return;
+      }
+      return; // consume all other clicks while confirm is open
+    }
+
     /* ── log scroll arrow clicks ── */
     const scrollUp = this.ren._logScrollUp;
     const scrollDn = this.ren._logScrollDown;
@@ -367,6 +391,9 @@ class Game {
         if (hit(btns.hard)) {
           SFX.titleMelody(); resetNames(); this.difficulty = 'hard'; this.floor = 1; this._beginDraft(); return;
         }
+        if (hit(btns.cont)) {
+          SFX.titleMelody(); this._loadGame(); return;
+        }
       }
       return;
     }
@@ -376,7 +403,7 @@ class Game {
     }
     if (this.state === S_BONUS) { this._clickBonus(px, py); return; }
     if (this.state === S_DRAFT) { this._clickDraft(px, py); return; }
-    if (this.state === S_VICTORY) { this.floor = 0; this.state = S_TITLE; this.roster = null; return; }
+    if (this.state === S_VICTORY) { this._clickVictory(px, py); return; }
     if (this.state === S_LOSE) {
       /* if rewinding is available, block the title transition so the rewind button can be used */
       if (!(this.rewindsLeft > 0 && this.snapshots.length > 0)) {
@@ -561,7 +588,13 @@ class Game {
       this._showActionMenu();
       return;
     }
-    this._doCombat(this.sel, tgt);
+    /* show confirmation overlay before committing to combat */
+    const dt = this.map.at(tgt.x, tgt.y);
+    const at = this.map.at(this.sel.x, this.sel.y);
+    const af = forecast(this.sel, tgt, dt);
+    const df = canCounter(this.sel, tgt) ? forecast(tgt, this.sel, at) : null;
+    this._atkConfirm = { atk: this.sel, def: tgt, af, df };
+    SFX.menuOpen();
   }
 
   /* ── keyboard ── */
@@ -631,6 +664,7 @@ class Game {
 
   /* ── cancel (right-click / Escape) ── */
   _cancel() {
+    if (this._atkConfirm)  { this._atkConfirm  = null; SFX.menuBack(); return; }
     if (this._historyView) { this._historyView = null; SFX.menuBack(); return; }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
         this.state === S_WIN || this.state === S_LOSE || this.state === S_TITLE ||
@@ -802,13 +836,30 @@ class Game {
     if (!a.unit.alive) return;
 
     if (a.mx !== undefined) {
-      /* prevent two enemies from occupying the same tile */
-      const blocker = this.enemies.find(e => e !== a.unit && e.alive && e.x === a.mx && e.y === a.my)
-                   || this.players.find(p => p.alive && p.x === a.mx && p.y === a.my);
-      if (!blocker) {
+      const isOccupied = (x, y) =>
+        this.enemies.some(e => e !== a.unit && e.alive && e.x === x && e.y === y) ||
+        this.players.some(p => p.alive && p.x === x && p.y === y);
+
+      if (!isOccupied(a.mx, a.my)) {
         a.unit.x = a.mx; a.unit.y = a.my;
+      } else if (a.mx !== a.unit.x || a.my !== a.unit.y) {
+        /* destination occupied at execution time — re-find best available tile */
+        const target = a.target || { x: a.mx, y: a.my };
+        const allUnits = [...this.enemies, ...this.players];
+        const tiles = reachable(a.unit, this.map, allUnits);
+        const [lo, hi] = a.unit.weapon.rng;
+        let best = null, bestD = Infinity, bestAtk = false;
+        for (const t of tiles) {
+          if (isOccupied(t.x, t.y)) continue;
+          const d = Math.abs(t.x - target.x) + Math.abs(t.y - target.y);
+          const canAtk = d >= lo && d <= hi;
+          if (canAtk && (!bestAtk || d < bestD)) { best = t; bestD = d; bestAtk = true; }
+          else if (!bestAtk && d < bestD)         { best = t; bestD = d; }
+        }
+        if (best && (best.x !== a.unit.x || best.y !== a.unit.y)) {
+          a.unit.x = best.x; a.unit.y = best.y;
+        }
       }
-      /* if blocked, skip the move but still try to attack from current position */
     }
 
     if ((a.type === 'attack' || a.type === 'move_attack') && a.target && a.target.alive) {
@@ -1242,6 +1293,70 @@ class Game {
         this._beginTransitionOut();
         return;
       }
+    }
+  }
+
+  /* ═══════════ VICTORY CHOICE ═══════════ */
+  _clickVictory(px, py) {
+    const btns = this.ren._victoryBtns;
+    if (!btns) { this.floor = 0; this.state = S_TITLE; this.roster = null; return; }
+    const hit = (b) => b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h;
+    if (hit(btns.end))       { this.floor = 0; this.state = S_TITLE; this.roster = null; }
+    else if (hit(btns.cont)) { this._continueQuest(); }
+  }
+
+  _continueQuest() {
+    /* restart from floor 1 with the same party, fully healed */
+    const alive = this.players.filter(p => p.alive);
+    this.roster = alive.map(p => p.key);
+    for (const p of alive) p.hp = p.maxHp;
+    this.floor = 1;
+    this._startLevel();
+  }
+
+  /* ═══════════ SAVE / LOAD ═══════════ */
+  _saveGame() {
+    try {
+      const save = {
+        floor:      this.floor,
+        difficulty: this.difficulty,
+        players: this.players.filter(p => p.alive).map(p => ({
+          key: p.key,  name: p.name,  level: p.level,
+          hp: p.hp,    maxHp: p.maxHp,
+          str: p.str,  mag: p.mag,  skl: p.skl,
+          spd: p.spd,  lck: p.lck,  def: p.def,  res: p.res,  mov: p.mov,
+          inventory: p.inventory.map(i => ({ ...i })),
+        })),
+      };
+      localStorage.setItem('emblemtactics_save', JSON.stringify(save));
+      this._hasSave = true;
+    } catch (e) { /* quota exceeded or storage blocked */ }
+  }
+
+  _loadGame() {
+    try {
+      const raw = localStorage.getItem('emblemtactics_save');
+      if (!raw) return;
+      const save = JSON.parse(raw);
+      this.floor      = save.floor      || 1;
+      this.difficulty = save.difficulty || 'easy';
+      /* reconstruct Unit objects then override stats from saved data */
+      this.players = (save.players || []).map(pd => {
+        const u = new Unit(pd.key, 0, 0, true, pd.level || 1);
+        u.name  = pd.name;
+        u.hp    = pd.hp;    u.maxHp = pd.maxHp;
+        u.str   = pd.str;   u.mag   = pd.mag;   u.skl = pd.skl;
+        u.spd   = pd.spd;   u.lck   = pd.lck;   u.def = pd.def;
+        u.res   = pd.res;   u.mov   = pd.mov;
+        u.inventory = (pd.inventory || []).map(i => ({ ...i }));
+        return u;
+      });
+      this.roster = (save.players || []).map(pd => pd.key);
+      /* mark saved given-names as used so new units don't reuse them */
+      markNamesUsed((save.players || []).map(pd => pd.name.split(' ').pop()));
+      this._startLevel();
+    } catch (e) {
+      console.error('Failed to load save:', e);
     }
   }
 }

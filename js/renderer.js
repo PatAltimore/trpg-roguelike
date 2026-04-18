@@ -26,8 +26,11 @@ export class Renderer {
     this._logScrollUp    = null;  /* ▲ scroll arrow bounds */
     this._logScrollDown  = null;  /* ▼ scroll arrow bounds */
     this._logPanelBounds = null;  /* full log panel area (for wheel events) */
-    this._histContinueBtn = null; /* history view CONTINUE button */
-    this._histCancelBtn   = null; /* history view CANCEL button */
+    this._histContinueBtn     = null; /* history view CONTINUE button */
+    this._histCancelBtn       = null; /* history view CANCEL button */
+    this._atkConfirmAttackBtn = null; /* attack confirm ATTACK button */
+    this._atkConfirmCancelBtn = null; /* attack confirm CANCEL button */
+    this._victoryBtns         = null; /* {end, cont} victory screen buttons */
   }
 
   tick() { this.t++; }
@@ -39,7 +42,7 @@ export class Renderer {
     const c = this.cx;
     c.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
-    if (g.state === S_TITLE)   { this._title(); this._soundToggle(CANVAS_W - SIDEBAR_W, CANVAS_H - 40, SIDEBAR_W); return; }
+    if (g.state === S_TITLE)   { this._title(g); this._soundToggle(CANVAS_W - SIDEBAR_W, CANVAS_H - 40, SIDEBAR_W); return; }
     if (g.state === S_DRAFT)   { this._draftScreen(g); return; }
     if (g.state === S_BONUS)   { this._bonusScreen(g); return; }
     if (g.state === S_VICTORY) { this._victoryScreen(g); return; }
@@ -71,13 +74,14 @@ export class Renderer {
     this._sidebar(g);
     if (g.state === S_ACTION_MENU) this._menu(g);
     if (g.state === S_ATK_SELECT) this._atkPrompt();
+    if (g._atkConfirm) this._atkConfirmOverlay(g);
     if (g.state === S_COMBAT_ANIM && g._enemyCombatPending) this._enemyAtkBanner();
     this._tutBanner(g);
     if (g.state === S_WIN || g.state === S_LOSE) this._overlay(g);
   }
 
   /* ═══════════ TITLE ═══════════ */
-  _title() {
+  _title(g) {
     const c = this.cx;
     c.fillStyle = '#0a0a1a';
     c.fillRect(0, 0, CANVAS_W, CANVAS_H);
@@ -108,10 +112,22 @@ export class Renderer {
     /* menu buttons */
     const bw = 200, bh = 32, gap = 10;
     const bx = mx - bw / 2;
-    const by0 = my + 72;
-    const by1 = by0 + bh + gap;
-    const by2 = by1 + bh + gap;
-    const by3 = by2 + bh + gap;
+    const hasSave = g && g._hasSave;
+
+    /* shift everything down one slot if CONTINUE SAVE is shown */
+    const contY = hasSave ? my + 30 : null;
+    const by0   = hasSave ? my + 30 + bh + gap : my + 72;  // TUTORIAL
+    const by1   = by0 + bh + gap;                           // EASY
+    const by2   = by1 + bh + gap;                           // MEDIUM
+    const by3   = by2 + bh + gap;                           // HARD
+
+    /* CONTINUE SAVE (only when a save exists) */
+    if (hasSave) {
+      c.fillStyle = '#1a1505'; c.fillRect(bx, contY, bw, bh);
+      c.strokeStyle = C.GOLD;  c.lineWidth = 2; c.strokeRect(bx, contY, bw, bh);
+      c.fillStyle = C.GOLD; c.font = `9px ${FONT}`; c.textAlign = 'center';
+      c.fillText('CONTINUE SAVE', mx, contY + 21);
+    }
 
     /* TUTORIAL button */
     c.fillStyle = '#1a2a60'; c.fillRect(bx, by0, bw, bh);
@@ -144,6 +160,7 @@ export class Renderer {
       medium:   { x: bx, y: by2, w: bw, h: bh },
       hard:     { x: bx, y: by3, w: bw, h: bh },
     };
+    if (hasSave) this._titleBtns.cont = { x: bx, y: contY, w: bw, h: bh };
 
     c.fillStyle = '#606060';
     c.font = `7px ${FONT}`;
@@ -1005,6 +1022,103 @@ export class Renderer {
     c.fillText('\u2694 Click a target to attack  \u2022  Click empty tile to cancel', mapW / 2, mapH - 12);
   }
 
+  /* ═══════════ ATTACK CONFIRMATION OVERLAY ═══════════ */
+  _atkConfirmOverlay(g) {
+    const c = this.cx;
+    const mapW = COLS * TILE;
+    const mapH = ROWS * TILE;
+    const { atk, def, af, df } = g._atkConfirm;
+
+    /* dim the map */
+    c.fillStyle = 'rgba(0,0,0,0.65)';
+    c.fillRect(0, 0, mapW, mapH);
+
+    /* box */
+    const ow = 380, oh = 188;
+    const ox = Math.round((mapW - ow) / 2);
+    const oy = Math.round((mapH - oh) / 2);
+    c.fillStyle = '#07071a'; c.fillRect(ox, oy, ow, oh);
+    c.strokeStyle = '#9030d0'; c.lineWidth = 2; c.strokeRect(ox, oy, ow, oh);
+
+    const lx = ox + 14;
+
+    /* title */
+    c.fillStyle = '#b060ff'; c.font = `8px ${FONT}`; c.textAlign = 'center';
+    c.fillText('CONFIRM ATTACK', ox + ow / 2, oy + 15);
+    c.fillStyle = '#402060'; c.fillRect(ox + 10, oy + 21, ow - 20, 1);
+
+    /* ── ATK row ── */
+    const atY = oy + 34;
+    c.textAlign = 'left';
+    c.fillStyle = '#8080ff'; c.font = `7px ${FONT}`; c.fillText('ATK', lx, atY);
+    c.fillStyle = '#c0c0ff'; c.font = `8px ${FONT}`; c.fillText(atk.name, lx + 26, atY);
+    const atkPredHp = df ? Math.max(0, atk.hp - df.dmg) : atk.hp;
+    this._forecastBar(c, lx, atY + 5, ow - 28, 8, atk.hp, atk.maxHp, atkPredHp);
+    c.fillStyle = '#9090b0'; c.font = `7px ${FONT}`; c.textAlign = 'right';
+    c.fillText(`HP ${atk.hp}\u2192${atkPredHp}/${atk.maxHp}`, ox + ow - 12, atY + 14);
+    c.textAlign = 'left'; c.fillStyle = C.TXT;
+    c.fillText(`DMG ${af.dmg}  HIT ${af.hit}%  CRT ${af.crit}%${af.doubles ? '  \xd72' : ''}`, lx, atY + 28);
+
+    /* divider */
+    c.fillStyle = '#402060'; c.fillRect(ox + 10, oy + 78, ow - 20, 1);
+
+    /* ── DEF row ── */
+    const dfY = oy + 92;
+    c.textAlign = 'left';
+    c.fillStyle = '#ff8080'; c.font = `7px ${FONT}`; c.fillText('DEF', lx, dfY);
+    c.fillStyle = '#ffb0b0'; c.font = `8px ${FONT}`; c.fillText(def.name, lx + 26, dfY);
+    const defPredHp = Math.max(0, def.hp - af.dmg);
+    this._forecastBar(c, lx, dfY + 5, ow - 28, 8, def.hp, def.maxHp, defPredHp);
+    c.fillStyle = '#9090b0'; c.font = `7px ${FONT}`; c.textAlign = 'right';
+    c.fillText(`HP ${def.hp}\u2192${defPredHp}/${def.maxHp}`, ox + ow - 12, dfY + 14);
+    c.textAlign = 'left';
+    if (df) {
+      c.fillStyle = C.TXT;
+      c.fillText(`DMG ${df.dmg}  HIT ${df.hit}%  CRT ${df.crit}%${df.doubles ? '  \xd72' : ''}`, lx, dfY + 28);
+    } else {
+      c.fillStyle = '#666'; c.fillText('Cannot counter', lx, dfY + 28);
+    }
+
+    /* ── buttons ── */
+    const btnW = 140, btnH = 28;
+    const btnY = oy + oh - 40;
+    const aBx  = ox + ow / 2 - btnW - 8;
+    const cBx  = ox + ow / 2 + 8;
+
+    c.fillStyle = '#0a1840'; c.fillRect(aBx, btnY, btnW, btnH);
+    c.strokeStyle = '#4060d0'; c.lineWidth = 2; c.strokeRect(aBx, btnY, btnW, btnH);
+    c.fillStyle = '#8090ff'; c.font = `8px ${FONT}`; c.textAlign = 'center';
+    c.fillText('ATTACK', aBx + btnW / 2, btnY + 19);
+
+    c.fillStyle = '#200808'; c.fillRect(cBx, btnY, btnW, btnH);
+    c.strokeStyle = '#b03030'; c.lineWidth = 2; c.strokeRect(cBx, btnY, btnW, btnH);
+    c.fillStyle = '#ff6060';
+    c.fillText('CANCEL', cBx + btnW / 2, btnY + 19);
+
+    this._atkConfirmAttackBtn = { x: aBx, y: btnY, w: btnW, h: btnH };
+    this._atkConfirmCancelBtn = { x: cBx, y: btnY, w: btnW, h: btnH };
+  }
+
+  /* HP bar that also shows predicted-loss zone after an attack */
+  _forecastBar(c, x, y, w, h, hp, maxHp, predHp) {
+    const m = Math.max(1, maxHp);
+    /* background */
+    c.fillStyle = '#1a1a2a'; c.fillRect(x, y, w, h);
+    /* current HP bar */
+    const curW = Math.max(0, Math.round(w * hp / m));
+    c.fillStyle = hp / m > 0.5 ? '#20a020' : hp / m > 0.25 ? '#a08010' : '#a01010';
+    c.fillRect(x, y, curW, h);
+    /* predicted-loss zone (dark red overlay + red marker) */
+    if (predHp < hp && hp > 0) {
+      const predW = Math.max(0, Math.round(w * predHp / m));
+      c.fillStyle = 'rgba(180,0,0,0.55)';
+      c.fillRect(x + predW, y, curW - predW, h);
+      if (predW > 0) { c.fillStyle = '#ff4040'; c.fillRect(x + predW - 1, y, 2, h); }
+    }
+    /* border */
+    c.strokeStyle = '#333344'; c.lineWidth = 1; c.strokeRect(x, y, w, h);
+  }
+
   _enemyAtkBanner() {
     const c = this.cx;
     const mapW = COLS * TILE;
@@ -1198,12 +1312,30 @@ export class Renderer {
     c.font = `8px ${FONT}`;
     c.fillText(`Levels conquered: ${FINAL_FLOOR}`, mx, 190);
 
-    /* prompt */
-    if (Math.floor(t / 40) % 2 === 0) {
-      c.fillStyle = '#a0a0a0';
-      c.font = `8px ${FONT}`;
-      c.fillText('Click to return to title...', mx, CANVAS_H - 16);
-    }
+    /* END JOURNEY / CONTINUE QUEST buttons */
+    const btnW = 174, btnH = 38, btnGap = 20;
+    const btnY = CANVAS_H - 76;
+    const endBx = mx - btnW - btnGap / 2;
+    const cntBx = mx + btnGap / 2;
+
+    c.fillStyle = '#0a1020'; c.fillRect(endBx, btnY, btnW, btnH);
+    c.strokeStyle = '#405080'; c.lineWidth = 2; c.strokeRect(endBx, btnY, btnW, btnH);
+    c.fillStyle = '#8090b0'; c.font = `8px ${FONT}`; c.textAlign = 'center';
+    c.fillText('END JOURNEY', endBx + btnW / 2, btnY + 14);
+    c.fillStyle = '#505870'; c.font = `6px ${FONT}`;
+    c.fillText('return to title', endBx + btnW / 2, btnY + 28);
+
+    c.fillStyle = '#1a1000'; c.fillRect(cntBx, btnY, btnW, btnH);
+    c.strokeStyle = C.GOLD; c.lineWidth = 2; c.strokeRect(cntBx, btnY, btnW, btnH);
+    c.fillStyle = C.GOLD; c.font = `8px ${FONT}`;
+    c.fillText('CONTINUE QUEST', cntBx + btnW / 2, btnY + 14);
+    c.fillStyle = '#908030'; c.font = `6px ${FONT}`;
+    c.fillText('same team, new run', cntBx + btnW / 2, btnY + 28);
+
+    this._victoryBtns = {
+      end:  { x: endBx, y: btnY, w: btnW, h: btnH },
+      cont: { x: cntBx, y: btnY, w: btnW, h: btnH },
+    };
   }
 
   /* ═══════════ HEAL PREVIEW ═══════════ */
