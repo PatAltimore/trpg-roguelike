@@ -491,9 +491,10 @@ export class Renderer {
     c.fillStyle = '#8090ff';
     c.font = `9px ${FONT}`;
     c.fillText(`PLAY HISTORY  \u00B7  Turn ${snap.turn}`, mapW / 2, 17);
-    c.fillStyle = '#4040a0';
+    const entryText = g._historyView.entry ? g._historyView.entry.text : '';
+    c.fillStyle = g._historyView.entry ? g._historyView.entry.color || '#a0a0c0' : '#505880';
     c.font = `6px ${FONT}`;
-    c.fillText('PLAY LOG', mapW / 2, 33);
+    c.fillText(entryText, mapW / 2, 33);
   }
 
   /* ═══════════ UNITS ═══════════ */
