@@ -476,14 +476,14 @@ export class Renderer {
     c.fillStyle = '#0e1a30'; c.fillRect(olderX, btnY, btnW, btnH);
     c.strokeStyle = '#3050a0'; c.lineWidth = 1; c.strokeRect(olderX, btnY, btnW, btnH);
     c.fillStyle = '#6080d0'; c.font = `7px ${FONT}`; c.textAlign = 'center';
-    c.fillText('⏪ OLDER', olderX + btnW / 2, btnY + 17);
+    c.fillText('<< OLDER', olderX + btnW / 2, btnY + 17);
     this._histNavOlder = { x: olderX, y: btnY, w: btnW, h: btnH };
 
     /* NEWER */
     c.fillStyle = '#0e1a30'; c.fillRect(newerX, btnY, btnW, btnH);
     c.strokeStyle = '#3050a0'; c.lineWidth = 1; c.strokeRect(newerX, btnY, btnW, btnH);
     c.fillStyle = '#6080d0'; c.font = `7px ${FONT}`; c.textAlign = 'center';
-    c.fillText('NEWER ⏩', newerX + btnW / 2, btnY + 17);
+    c.fillText('NEWER >>', newerX + btnW / 2, btnY + 17);
     this._histNavNewer = { x: newerX, y: btnY, w: btnW, h: btnH };
 
     /* ── centre label ── */
