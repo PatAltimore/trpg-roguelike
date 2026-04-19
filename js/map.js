@@ -278,8 +278,19 @@ export class GameMap {
   _themeForest(room, count) { this._placeTrees(room, count); }
 
   _themeFort(room) {
-    const fx = room.x + Math.floor(room.w / 2);
-    const fy = room.y + Math.floor(room.h / 2);
+    let fx = room.x + Math.floor(room.w / 2);
+    let fy = room.y + Math.floor(room.h / 2);
+    /* if the centre tile isn't plain (e.g. a corridor runs through it),
+       scan the room for any plain tile to guarantee placement */
+    if (this.at(fx, fy) !== T_PLAIN) {
+      outer:
+      for (let dy = 0; dy < room.h; dy++) {
+        for (let dx = 0; dx < room.w; dx++) {
+          const nx = room.x + dx, ny = room.y + dy;
+          if (this.at(nx, ny) === T_PLAIN) { fx = nx; fy = ny; break outer; }
+        }
+      }
+    }
     if (this.at(fx, fy) === T_PLAIN) this.tiles[fy][fx] = T_FORT;
     for (const [dx, dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
       const nx = fx + dx, ny = fy + dy;

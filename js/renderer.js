@@ -32,6 +32,8 @@ export class Renderer {
     this._atkConfirmCancelBtn = null; /* attack confirm CANCEL button */
     this._victoryBtns         = null; /* {end, cont} victory screen buttons */
     this._regenBtn            = null; /* regen map button (visible at level start only) */
+    this._histNavOlder        = null; /* ◄ OLDER button in history banner */
+    this._histNavNewer        = null; /* NEWER ► button in history banner */
   }
 
   tick() { this.t++; }
@@ -451,7 +453,7 @@ export class Renderer {
     }
   }
 
-  /* ── History map overlay (dim tint + banner) ── */
+  /* ── History map overlay (dim tint + banner with nav buttons) ── */
   _historyOverlay(g) {
     const c = this.cx;
     const mapW = COLS * TILE;
@@ -465,13 +467,33 @@ export class Renderer {
     c.lineWidth = 1;
     c.strokeRect(0, 0, mapW, 42);
     const snap = g._historyView.snap;
+
+    /* ── OLDER / NEWER navigation buttons ── */
+    const btnW = 84, btnH = 28, btnY = 7;
+    const olderX = 8, newerX = mapW - btnW - 8;
+
+    /* ◄ OLDER */
+    c.fillStyle = '#0e1a30'; c.fillRect(olderX, btnY, btnW, btnH);
+    c.strokeStyle = '#3050a0'; c.lineWidth = 1; c.strokeRect(olderX, btnY, btnW, btnH);
+    c.fillStyle = '#6080d0'; c.font = `7px ${FONT}`; c.textAlign = 'center';
+    c.fillText('\u25C4 OLDER', olderX + btnW / 2, btnY + 17);
+    this._histNavOlder = { x: olderX, y: btnY, w: btnW, h: btnH };
+
+    /* NEWER ► */
+    c.fillStyle = '#0e1a30'; c.fillRect(newerX, btnY, btnW, btnH);
+    c.strokeStyle = '#3050a0'; c.lineWidth = 1; c.strokeRect(newerX, btnY, btnW, btnH);
+    c.fillStyle = '#6080d0'; c.font = `7px ${FONT}`; c.textAlign = 'center';
+    c.fillText('NEWER \u25BA', newerX + btnW / 2, btnY + 17);
+    this._histNavNewer = { x: newerX, y: btnY, w: btnW, h: btnH };
+
+    /* ── centre label ── */
     c.textAlign = 'center';
     c.fillStyle = '#8090ff';
     c.font = `9px ${FONT}`;
     c.fillText(`\u25C4 HISTORY  \u00B7  Turn ${snap.turn}`, mapW / 2, 17);
     c.fillStyle = '#505880';
     c.font = `6px ${FONT}`;
-    c.fillText('\u2191\u2193 arrows to browse  \u00B7  Enter to continue from here  \u00B7  Esc to cancel', mapW / 2, 33);
+    c.fillText('Tap OLDER / NEWER  \u00B7  Sidebar: REWIND or CANCEL', mapW / 2, 33);
   }
 
   /* ═══════════ UNITS ═══════════ */
@@ -1219,11 +1241,11 @@ export class Renderer {
                 : g.floor >= FINAL_FLOOR ? 'The darkness has been vanquished!'
                 : `Level ${g.floor} cleared!`;
       c.fillText(sub, mx, my + 10);
-      c.fillText('Click to continue...', mx, my + 40);
+      c.fillText('Tap or click to continue', mx, my + 40);
     } else {
       c.fillStyle = '#ff2020'; c.font = `22px ${FONT}`; c.fillText('GAME OVER', mx, my - 30);
       c.fillStyle = C.TXT;    c.font = `10px ${FONT}`; c.fillText('Your Lord has fallen!', mx, my + 10);
-      c.fillText('Click to restart...', mx, my + 40);
+      c.fillText('Tap or click to restart', mx, my + 40);
     }
   }
 

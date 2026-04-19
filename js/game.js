@@ -306,6 +306,15 @@ class Game {
 
     /* ── history view intercepts all clicks ── */
     if (this._historyView) {
+      /* OLDER / NEWER nav buttons in the map banner */
+      const ob = this.ren._histNavOlder;
+      const nb = this.ren._histNavNewer;
+      if (ob && px >= ob.x && px <= ob.x + ob.w && py >= ob.y && py <= ob.y + ob.h) {
+        this._historyNavigate(-1); return;
+      }
+      if (nb && px >= nb.x && px <= nb.x + nb.w && py >= nb.y && py <= nb.y + nb.h) {
+        this._historyNavigate(1); return;
+      }
       /* CONTINUE button — restore snapshot, costs a charge */
       const cb = this.ren._histContinueBtn;
       if (cb && px >= cb.x && px <= cb.x + cb.w && py >= cb.y && py <= cb.y + cb.h) {
@@ -412,10 +421,9 @@ class Game {
     if (this.state === S_DRAFT) { this._clickDraft(px, py); return; }
     if (this.state === S_VICTORY) { this._clickVictory(px, py); return; }
     if (this.state === S_LOSE) {
-      /* if rewinding is available, block the title transition so the rewind button can be used */
-      if (!(this.rewindsLeft > 0 && this.snapshots.length > 0)) {
-        this.floor = 0; this.players = []; this.roster = null; this.state = S_TITLE;
-      }
+      /* any tap/click outside a log entry restarts — log-entry clicks are handled
+         earlier in this handler so rewind is still accessible before this line */
+      this.floor = 0; this.players = []; this.roster = null; this.state = S_TITLE;
       return;
     }
     if (this.state === S_ENEMY_TURN || this.state === S_COMBAT_ANIM ||
