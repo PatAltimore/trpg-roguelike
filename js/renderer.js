@@ -31,6 +31,7 @@ export class Renderer {
     this._atkConfirmAttackBtn = null; /* attack confirm ATTACK button */
     this._atkConfirmCancelBtn = null; /* attack confirm CANCEL button */
     this._victoryBtns         = null; /* {end, cont} victory screen buttons */
+    this._regenBtn            = null; /* regen map button (visible at level start only) */
   }
 
   tick() { this.t++; }
@@ -620,7 +621,8 @@ export class Renderer {
     /* ── fixed layout constants (computed early so the preview can reference LOG_TOP) ── */
     const SOUND_Y    = CANVAS_H - 34;
     const ENDTURN_Y  = SOUND_Y - 46;
-    const LOG_BTM    = ENDTURN_Y - 8;
+    /* regen button (28px tall + 4px gap) sits between the log and END TURN when available */
+    const LOG_BTM    = ENDTURN_Y - 8 - (g._canRegen ? 32 : 0);
     const LOG_TOP    = LOG_BTM - 123;  // 123px panel: 14px header + 7 lines×14px + 11px pad
 
     /* terrain — suppressed while a combat/heal/steal forecast is active so the
@@ -643,6 +645,13 @@ export class Renderer {
 
     /* play log */
     this._playLog(g, sx, LOG_TOP, sw);
+
+    /* regen map button — visible only before the first action on each level */
+    if (g._canRegen) {
+      this._regenLevelBtn(sx, LOG_BTM + 4, sw);
+    } else {
+      this._regenBtn = null;
+    }
 
     /* end-turn button OR history controls */
     if (g._historyView) {
@@ -925,6 +934,15 @@ export class Renderer {
     c.fillStyle = '#40d0f0'; c.font = `9px ${FONT}`; c.textAlign = 'center';
     c.fillText('END TURN', sx + sw / 2, y + 22);
     this._btn = { x: bx, y, w: bw, h: bh };
+  }
+
+  _regenLevelBtn(sx, y, sw) {
+    const c = this.cx, bx = sx + 10, bw = sw - 20, bh = 24;
+    c.fillStyle = '#0d1a2a'; c.fillRect(bx, y, bw, bh);
+    c.strokeStyle = '#205080'; c.lineWidth = 1; c.strokeRect(bx, y, bw, bh);
+    c.fillStyle = '#4090c0'; c.font = `7px ${FONT}`; c.textAlign = 'center';
+    c.fillText('\u21BA REGEN MAP', sx + sw / 2, y + 15);
+    this._regenBtn = { x: bx, y, w: bw, h: bh };
   }
 
   /* ── History view controls (replaces END TURN while browsing history) ── */

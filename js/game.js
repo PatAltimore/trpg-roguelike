@@ -226,6 +226,13 @@ class Game {
   }
 
   /* ═══════════ LEVEL SETUP ═══════════ */
+
+  /* true only before the first action of a level — hides the button as soon as play starts */
+  get _canRegen() {
+    return this.turn === 1 && this.phase === 'player' && this.state === S_IDLE &&
+           !this._historyView && !this.players.some(p => p.moved || p.acted);
+  }
+
   _startLevel() {
     this.map = new GameMap(this.floor);
 
@@ -432,10 +439,16 @@ class Game {
       return;
     }
 
-    /* end-turn button (only in idle / unit-select, not during action menu or atk select) */
+    /* sidebar buttons (only in idle / unit-select, not during action menu or atk select) */
     if (px >= mapW && this.phase === 'player') {
       const b = this.ren.endTurnBtn;
       if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) { this._endPlayerTurn(); return; }
+      const rb = this.ren._regenBtn;
+      if (rb && px >= rb.x && px <= rb.x + rb.w && py >= rb.y && py <= rb.y + rb.h && this._canRegen) {
+        SFX.menuSelect();
+        this._startLevel();
+        return;
+      }
     }
 
     if (cx < 0 || cx >= COLS || cy < 0 || cy >= ROWS) return;
