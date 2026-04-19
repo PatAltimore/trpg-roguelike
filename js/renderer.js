@@ -490,7 +490,7 @@ export class Renderer {
     c.textAlign = 'center';
     c.fillStyle = '#8090ff';
     c.font = `9px ${FONT}`;
-    c.fillText(`\u25C4 HISTORY  \u00B7  Turn ${snap.turn}`, mapW / 2, 17);
+    c.fillText('PLAY HISTORY  \u00B7  Turn ${snap.turn}`, mapW / 2, 17);
     c.fillStyle = '#505880';
     c.font = `6px ${FONT}`;
     c.fillText('Tap OLDER / NEWER  \u00B7  Sidebar: REWIND or CANCEL', mapW / 2, 33);
