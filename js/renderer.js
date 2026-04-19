@@ -114,19 +114,19 @@ export class Renderer {
     const bx = mx - bw / 2;
     const hasSave = g && g._hasSave;
 
-    /* shift everything down one slot if CONTINUE SAVE is shown */
+    /* shift everything down one slot if CONTINUE is shown */
     const contY = hasSave ? my + 30 : null;
     const by0   = hasSave ? my + 30 + bh + gap : my + 72;  // TUTORIAL
     const by1   = by0 + bh + gap;                           // EASY
     const by2   = by1 + bh + gap;                           // MEDIUM
     const by3   = by2 + bh + gap;                           // HARD
 
-    /* CONTINUE SAVE (only when a save exists) */
+    /* CONTINUE (only when a save exists) */
     if (hasSave) {
       c.fillStyle = '#1a1505'; c.fillRect(bx, contY, bw, bh);
       c.strokeStyle = C.GOLD;  c.lineWidth = 2; c.strokeRect(bx, contY, bw, bh);
       c.fillStyle = C.GOLD; c.font = `9px ${FONT}`; c.textAlign = 'center';
-      c.fillText('CONTINUE SAVE', mx, contY + 21);
+      c.fillText('CONTINUE', mx, contY + 21);
     }
 
     /* TUTORIAL button */
