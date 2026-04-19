@@ -491,9 +491,9 @@ export class Renderer {
     c.fillStyle = '#8090ff';
     c.font = `9px ${FONT}`;
     c.fillText(`PLAY HISTORY  \u00B7  Turn ${snap.turn}`, mapW / 2, 17);
-    c.fillStyle = '#505880';
+    c.fillStyle = '#4040a0';
     c.font = `6px ${FONT}`;
-    c.fillText('Tap OLDER / NEWER  \u00B7  Sidebar: REWIND or CANCEL', mapW / 2, 33);
+    c.fillText('PLAY LOG', mapW / 2, 33);
   }
 
   /* ═══════════ UNITS ═══════════ */
