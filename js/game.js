@@ -505,7 +505,11 @@ class Game {
     const b = this._menuBounds;
     if (!b || px < b.x || px > b.x + b.w || py < b.y || py > b.y + b.h) return;
 
-    const idx = Math.floor((py - b.y - 20) / 40);
+    /* menu rows are laid out in the renderer's local (unscaled) units —
+       20px header offset, 40px per row — then stretched by the sidebar's
+       current font/spacing scale, so undo that scale to find the row */
+    const scale = this.ren._sideRect.scale;
+    const idx = Math.floor((py - b.y - 20 * scale) / (40 * scale));
     if (idx < 0 || idx >= this.menuOpts.length) return;
     const opt = this.menuOpts[idx];
     if (!opt.on) return;

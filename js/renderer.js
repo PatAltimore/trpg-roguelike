@@ -10,11 +10,10 @@ import { CLASS_INFO, DRAFT_POOL } from './units.js';
 
 const FONT = '"Press Start 2P", monospace';
 
-/* Info-pane content never grows wider than this, even when the panel itself
-   is stretched to the full map width (portrait) — keeps text/buttons a
-   sensible reading width instead of stretching edge-to-edge, and is wide
-   enough for the unit stat grid to switch from 2 to 4 columns. */
-const SIDEBAR_CONTENT_W = 420;
+/* Portrait info-pane font/spacing scale is never pushed past this multiple
+   of its landscape size — a safety cap for unusual (very tall/narrow)
+   viewports so the pane can't balloon and force the map itself to shrink. */
+const SIDEBAR_SCALE_CAP = 2.5;
 
 export class Renderer {
   constructor(canvas) {
@@ -42,9 +41,8 @@ export class Renderer {
     this._histNavNewer        = null; /* NEWER ► button in history banner */
 
     /* ── responsive layout ── */
-    this._sideRect    = { x: COLS * TILE, y: 0, w: SIDEBAR_W, h: CANVAS_H }; /* current info-pane rect */
-    this._contentRect = { x: COLS * TILE, w: SIDEBAR_W };                    /* centered content column within it */
-    this.onResize     = null; /* set by Game — called when the canvas backing store is resized */
+    this._sideRect = { x: COLS * TILE, y: 0, w: SIDEBAR_W, h: CANVAS_H, scale: 1 }; /* current info-pane rect */
+    this.onResize  = null; /* set by Game — called when the canvas backing store is resized */
   }
 
   tick() { this.t++; }
@@ -67,15 +65,25 @@ export class Renderer {
 
     let w, h, side;
     if (gameplay && portrait) {
+      /* Grow the panel's own font/spacing scale as large as the screen
+         allows without pushing the *map* itself below full width once the
+         result is fit to the viewport — i.e. use up all the leftover
+         vertical room the portrait screen has beyond mapW×mapH+panel,
+         instead of leaving it blank. */
+      const maxCanvasH = vh * (mapW / vw);        // canvas height before the fit becomes height-bound
+      const maxSideH   = Math.max(CANVAS_H, maxCanvasH - mapH);
+      const scale      = Math.min(SIDEBAR_SCALE_CAP, Math.max(1, maxSideH / CANVAS_H));
+
       w = mapW;
-      h = mapH + CANVAS_H;
-      /* panel spans the full map width below it — _sidebar() centers a
-         narrower, readable content column inside this strip */
-      side = { x: 0, y: mapH, w: mapW, h: CANVAS_H };
+      h = mapH + Math.round(CANVAS_H * scale);
+      /* panel spans the full map width below it; _sidebar() renders its
+         content in a local, unscaled coordinate space and stretches it to
+         fill this rect, so it's always "as wide as the playfield" */
+      side = { x: 0, y: mapH, w: mapW, h: h - mapH, scale };
     } else {
       w = CANVAS_W;
       h = CANVAS_H;
-      side = { x: mapW, y: 0, w: SIDEBAR_W, h: CANVAS_H };
+      side = { x: mapW, y: 0, w: SIDEBAR_W, h: CANVAS_H, scale: 1 };
     }
 
     this._sideRect = side;
@@ -648,19 +656,24 @@ export class Renderer {
 
   /* ═══════════ SIDEBAR ═══════════ */
   _sidebar(g) {
-    const c = this.cx, { x: sx, y: sy, w: sw, h: sh } = this._sideRect;
+    const c = this.cx, { x: sx, y: sy, w: sw, scale } = this._sideRect;
+    const sh = CANVAS_H * scale;
     c.fillStyle = C.SIDE_BG; c.fillRect(sx, sy, sw, sh);
     c.strokeStyle = C.SIDE_BD; c.lineWidth = 2; c.strokeRect(sx, sy, sw, sh);
 
-    /* content column — capped width, centered within the panel strip so
-       text/buttons stay a sensible reading width even when the strip
-       itself has been stretched to the full map width (portrait) */
-    const sw2 = Math.min(sw, SIDEBAR_CONTENT_W);
-    const sx2 = sx + Math.round((sw - sw2) / 2);
-    this._contentRect = { x: sx2, w: sw2 };
+    /* Every element below is drawn in a local, unscaled coordinate space —
+       exactly the original 224-wide/600-tall column — then the whole thing
+       is stretched by `scale` to fill the actual panel rect. In portrait
+       that rect is the full map width and a taller strip, so `scale` grows
+       (see _applyLayout) and fonts/spacing/buttons all grow together with
+       it, filling the space without any per-element rework or distortion. */
+    const lw = sw / scale; // local width — always resolves back to `sw` once scaled
+    c.save();
+    c.translate(sx, sy);
+    c.scale(scale, scale);
 
-    let y = sy + 14;
-    const px = sx2 + 10;
+    let y = 14;
+    const px = 10;
     c.textAlign = 'left';
 
     /* floor / phase / turn */
@@ -687,14 +700,14 @@ export class Renderer {
     c.fillText(`Turn ${g.turn}`, px, y); y += 18;
 
     /* divider */
-    c.fillStyle = C.SIDE_BD; c.fillRect(sx2+5, y, sw2-10, 1); y += 8;
+    c.fillStyle = C.SIDE_BD; c.fillRect(px-5, y, lw-10, 1); y += 8;
 
     /* unit info */
     const u = g.sel || this._unitAt(g, g.cur);
-    if (u) y = this._unitPanel(u, px, y, sw2 - 20);
+    if (u) y = this._unitPanel(u, px, y, lw - 20);
 
     /* ── fixed layout constants (computed early so the preview can reference LOG_TOP) ── */
-    const SOUND_Y    = sy + sh - 34;
+    const SOUND_Y    = CANVAS_H - 34;
     const ENDTURN_Y  = SOUND_Y - 46;
     /* regen button (36px tall + 6px gap) sits between the log and END TURN when available */
     const LOG_BTM    = ENDTURN_Y - 8 - (g._canRegen ? 42 : 0);
@@ -702,9 +715,9 @@ export class Renderer {
 
     /* terrain — suppressed while a combat/heal/steal forecast is active so the
        forecast always fits between the unit panel and the log without clipping */
-    if (g.cur && !g.preview) y = this._terrainPanel(g, px, y, sw2 - 20);
+    if (g.cur && !g.preview) y = this._terrainPanel(g, px, y, lw - 20);
 
-    /* store sidebar content bottom for action menu positioning */
+    /* store sidebar content bottom (local coords) for action menu positioning */
     this._sidebarContentY = y;
 
     /* combat / heal / steal preview — pinned to sit just above the log panel */
@@ -712,30 +725,58 @@ export class Renderer {
       const previewH = g.preview.heal ? 70 : g.preview.steal ? 70 : 120;
       const previewY = Math.min(y, LOG_TOP - previewH - 4);
       if (previewY > 50) {
-        if (g.preview.heal) { this._healPreview(g.preview, sx2, previewY, sw2); }
-        else if (g.preview.steal) { this._stealPreview(g.preview, sx2, previewY, sw2); }
-        else { this._combatPreview(g.preview, sx2, previewY, sw2); }
+        if (g.preview.heal) { this._healPreview(g.preview, 0, previewY, lw); }
+        else if (g.preview.steal) { this._stealPreview(g.preview, 0, previewY, lw); }
+        else { this._combatPreview(g.preview, 0, previewY, lw); }
       }
     }
 
     /* play log */
-    this._playLog(g, sx2, LOG_TOP, sw2);
+    this._playLog(g, 0, LOG_TOP, lw);
 
     /* regen map button — visible only before the first action on each level */
     if (g._canRegen) {
-      this._regenLevelBtn(sx2, LOG_BTM + 4, sw2);
+      this._regenLevelBtn(0, LOG_BTM + 4, lw);
     } else {
       this._regenBtn = null;
     }
 
     /* end-turn button OR history controls */
     if (g._historyView) {
-      this._historyControls(g, sx2, ENDTURN_Y, sw2);
+      this._historyControls(g, 0, ENDTURN_Y, lw);
     } else {
       const showEndBtn = g.phase === 'player' && g.state !== S_ACTION_MENU && g.state !== S_ATK_SELECT;
-      if (showEndBtn) this._endBtn(sx2, ENDTURN_Y, sw2);
+      if (showEndBtn) this._endBtn(0, ENDTURN_Y, lw);
     }
-    this._soundToggle(sx2, SOUND_Y, sw2);
+    this._soundToggle(0, SOUND_Y, lw);
+
+    c.restore();
+
+    /* everything above recorded its click/wheel hit-areas in the local,
+       unscaled space — convert them back to absolute canvas pixels now
+       that the transform is gone (game.js hit-tests in absolute space) */
+    this._toAbsBounds(sx, sy, scale);
+  }
+
+  /* Converts sidebar hit-area bounds recorded in local (unscaled) space —
+     while drawing inside the translate+scale block above — into absolute
+     canvas-pixel rects. */
+  _toAbsBounds(sx, sy, scale) {
+    const abs = r => r && { x: sx + r.x * scale, y: sy + r.y * scale, w: r.w * scale, h: r.h * scale };
+    this._btn             = abs(this._btn);
+    this._sndBtn           = abs(this._sndBtn);
+    this._regenBtn         = abs(this._regenBtn);
+    this._rewindBtnBounds  = abs(this._rewindBtnBounds);
+    this._logScrollUp      = abs(this._logScrollUp);
+    this._logScrollDown    = abs(this._logScrollDown);
+    this._logPanelBounds   = abs(this._logPanelBounds);
+    this._histContinueBtn  = abs(this._histContinueBtn);
+    this._histCancelBtn    = abs(this._histCancelBtn);
+    if (this._logEntryBounds) {
+      this._logEntryBounds = this._logEntryBounds.map(e => ({
+        x: sx + e.x * scale, y: sy + e.y * scale, w: e.w * scale, h: e.h * scale, entry: e.entry,
+      }));
+    }
   }
 
   _unitAt(g, cur) {
@@ -839,11 +880,17 @@ export class Renderer {
   _menu(g) {
     const c = this.cx;
     const itemH = 40, pad = 12;
-    const { x: sx, w: sw } = this._contentRect;
-    const mw = sw - 20, mh = g.menuOpts.length * itemH + pad * 2;
-    const mx = sx + 10;
-    /* place below the stats/terrain panels (tracked by _sidebar) */
+    const { x: sx, y: sy, w: sw, scale } = this._sideRect;
+    const lw = sw / scale;
+    const mw = lw - 20, mh = g.menuOpts.length * itemH + pad * 2;
+    const mx = 10;
+    /* place below the stats/terrain panels (tracked by _sidebar, local coords) */
     const my = (this._sidebarContentY || 340) + 6;
+
+    /* drawn in the same local, unscaled space as _sidebar() — see there */
+    c.save();
+    c.translate(sx, sy);
+    c.scale(scale, scale);
 
     /* background */
     c.fillStyle = '#0a0a20'; c.fillRect(mx - 2, my, mw + 4, mh);
@@ -851,7 +898,7 @@ export class Renderer {
 
     /* header */
     c.fillStyle = '#8080cc'; c.font = `8px ${FONT}`; c.textAlign = 'center';
-    c.fillText('ACTION', sx + sw / 2, my + 12);
+    c.fillText('ACTION', lw / 2, my + 12);
 
     g.menuOpts.forEach((opt, i) => {
       const oy = my + pad + 8 + i * itemH;
@@ -864,11 +911,13 @@ export class Renderer {
       }
       c.fillStyle = opt.on ? '#ffffff' : '#404050';
       c.font = `10px ${FONT}`; c.textAlign = 'center';
-      c.fillText(opt.label, sx + sw / 2, oy + 14);
+      c.fillText(opt.label, lw / 2, oy + 14);
     });
 
-    /* store bounds for click detection */
-    g._menuBounds = { x: mx - 2, y: my, w: mw + 4, h: mh };
+    c.restore();
+
+    /* store bounds for click detection — converted to absolute canvas pixels */
+    g._menuBounds = { x: sx + (mx-2)*scale, y: sy + my*scale, w: (mw+4)*scale, h: mh*scale };
   }
 
   /* ═══════════ PLAY LOG ═══════════ */
