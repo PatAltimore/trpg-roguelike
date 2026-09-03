@@ -12,21 +12,35 @@
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* html/body are pinned to exactly the visible viewport (not just
+       overflow:hidden) — on mobile Safari, `100vh` alone measures the
+       *largest* viewport (address bar collapsed), so the page can end up
+       taller than what's actually visible and silently scroll a few
+       pixels on load. That scroll offset is invisible on the map-filling
+       gameplay screen but very obvious on the title screen, where the
+       canvas is a small letterboxed rectangle that then reads as
+       "not centered". `position: fixed` + 100% makes scrolling impossible
+       regardless of which viewport height the browser measured. */
+    html, body {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
     body {
       background: #0a0a1a;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
       font-family: 'Press Start 2P', monospace;
       color: #e8e8e8;
-      overflow: hidden;
     }
     #game-container {
       position: relative;
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      height: 100%;
       overflow: hidden;
       touch-action: none;
     }

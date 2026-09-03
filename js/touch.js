@@ -8,7 +8,12 @@
    - Pinch:  zoom in/out
    - Double-tap:  toggle zoom (fit ↔ 2× at tap location)           */
 
-const MIN_ZOOM = 0.5;
+/* The title/draft(landscape)/bonus/victory screens render at a fixed
+   1024px-wide canvas, which is wider than almost every phone's viewport —
+   MIN_ZOOM has to stay low enough that fitting them to screen never needs
+   clamping (which would leave the fit-to-screen centering math and the
+   actually-applied zoom out of sync — see the comment in _fitToScreen). */
+const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 3.0;
 const ZOOM_IN_LEVEL = 2.0;   // zoom level for double-tap zoom-in
 const TAP_THRESHOLD = 10;     // px — max movement to count as a tap
@@ -80,7 +85,12 @@ export class TouchController {
     const vh = vp ? vp.height : window.innerHeight;
     const cw = this.cv.width;
     const ch = this.cv.height;
-    this.zoom = Math.min(vw / cw, vh / ch);
+    /* clamp *before* computing pan — _applyTransform() re-clamps too, but
+       if the natural fit falls below MIN_ZOOM (common: this canvas is
+       often much wider than a phone) and pan were computed against the
+       unclamped value, the canvas would render bigger than planned here
+       yet stay positioned/centered as if it hadn't been, landing off-center */
+    this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.min(vw / cw, vh / ch)));
     this._fitZoom = this.zoom;
     /* center the canvas */
     this.panX = (vw - cw * this.zoom) / 2;

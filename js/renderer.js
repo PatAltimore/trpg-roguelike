@@ -10,10 +10,13 @@ import { CLASS_INFO, DRAFT_POOL } from './units.js';
 
 const FONT = '"Press Start 2P", monospace';
 
-/* Portrait info-pane font/spacing scale is never pushed past this multiple
-   of its landscape size — a safety cap for unusual (very tall/narrow)
-   viewports so the pane can't balloon and force the map itself to shrink. */
-const SIDEBAR_SCALE_CAP = 2.5;
+/* Portrait info-pane font/spacing scale — always at least MIN (readability
+   is the priority: a phone-shaped viewport pays for this with a little
+   letterboxing on the map, which is an acceptable trade), but grows past
+   that for free on taller aspect ratios up to CAP, where it stops growing
+   even on unusually tall/narrow viewports. */
+const SIDEBAR_MIN_SCALE = 2.0;
+const SIDEBAR_SCALE_CAP = 2.6;
 
 export class Renderer {
   constructor(canvas) {
@@ -52,8 +55,9 @@ export class Renderer {
   /* ═══════════ RESPONSIVE LAYOUT ═══════════
      Decides whether the info pane sits beside the map (landscape) or
      below it (portrait), and resizes the canvas backing store to match.
-     Title/Draft/Bonus/Victory keep the fixed widescreen canvas — they're
-     full-bleed art screens with no info-pane concept. */
+     The team-draft screen also reflows to a single column in portrait.
+     Title/Bonus/Victory keep the fixed widescreen canvas — they're
+     full-bleed art screens with no responsive layout of their own. */
   _applyLayout(g) {
     const vp = window.visualViewport;
     const vw = vp ? vp.width  : window.innerWidth;
@@ -63,33 +67,49 @@ export class Renderer {
                      g.state !== S_BONUS && g.state !== S_VICTORY;
     const mapW = COLS * TILE, mapH = ROWS * TILE;
 
-    let w, h, side;
+    let w, h;
+    this._draftPortrait = false;
+
     if (gameplay && portrait) {
-      /* Grow the panel's own font/spacing scale as large as the screen
-         allows without pushing the *map* itself below full width once the
-         result is fit to the viewport — i.e. use up all the leftover
-         vertical room the portrait screen has beyond mapW×mapH+panel,
-         instead of leaving it blank. */
+      /* Grow the panel's own font/spacing scale to fill the screen — a
+         MIN is guaranteed regardless of aspect ratio (readability over a
+         perfectly letterbox-free map), and it grows further for free on
+         tall/narrow phones where there's more room to give, up to CAP. */
       const maxCanvasH = vh * (mapW / vw);        // canvas height before the fit becomes height-bound
       const maxSideH   = Math.max(CANVAS_H, maxCanvasH - mapH);
-      const scale      = Math.min(SIDEBAR_SCALE_CAP, Math.max(1, maxSideH / CANVAS_H));
+      const safeScale  = maxSideH / CANVAS_H;
+      const scale      = Math.min(SIDEBAR_SCALE_CAP, Math.max(SIDEBAR_MIN_SCALE, safeScale));
 
       w = mapW;
       h = mapH + Math.round(CANVAS_H * scale);
       /* panel spans the full map width below it; _sidebar() renders its
          content in a local, unscaled coordinate space and stretches it to
          fill this rect, so it's always "as wide as the playfield" */
-      side = { x: 0, y: mapH, w: mapW, h: h - mapH, scale };
+      this._sideRect = { x: 0, y: mapH, w: mapW, h: h - mapH, scale };
+    } else if (g.state === S_DRAFT && portrait) {
+      /* team-draft screen: stack the class cards in a single column so
+         reading them only ever needs vertical scrolling/zooming */
+      this._draftPortrait = true;
+      w = mapW;
+      h = this._draftPortraitHeight(g);
     } else {
       w = CANVAS_W;
       h = CANVAS_H;
-      side = { x: mapW, y: 0, w: SIDEBAR_W, h: CANVAS_H, scale: 1 };
+      if (gameplay) this._sideRect = { x: mapW, y: 0, w: SIDEBAR_W, h: CANVAS_H, scale: 1 };
     }
 
-    this._sideRect = side;
     const changed = this.cv.width !== w || this.cv.height !== h;
     if (changed) { this.cv.width = w; this.cv.height = h; }
     return changed;
+  }
+
+  /* Total canvas height needed to stack every draft-pool class card in a
+     single column (pool size is fixed once the draft screen opens, so this
+     never changes mid-screen — no resize jank while picking). */
+  _draftPortraitHeight(g) {
+    const n = (g._draftPool && g._draftPool.length) || 7;
+    const cardH = 140, gap = 12, startY = 126, footerH = 90;
+    return startY + n * (cardH + gap) - gap + footerH;
   }
 
   /* ═══════════ MAIN DRAW ═══════════ */
@@ -699,56 +719,46 @@ export class Renderer {
     c.fillStyle = C.TXT; c.font = `7px ${FONT}`;
     c.fillText(`Turn ${g.turn}`, px, y); y += 18;
 
+    /* sound toggle — top-right corner, out of the vertical flow below */
+    this._soundToggle(0, 12, lw);
+
     /* divider */
-    c.fillStyle = C.SIDE_BD; c.fillRect(px-5, y, lw-10, 1); y += 8;
+    c.fillStyle = C.SIDE_BD; c.fillRect(px-5, y, lw-10, 1); y += 10;
+
+    /* ── primary controls, right under the header ── whatever needs
+       tapping next (end the turn, confirm/cancel a rewind, regenerate the
+       map) sits in the same immediately-visible spot every time, instead
+       of requiring a look at the bottom of a possibly very tall pane */
+    this._sidebarTopY = y;
+    if (g._historyView) {
+      this._historyControls(g, 0, y, lw); y += 46 + 10;
+    } else {
+      const showEndBtn = g.phase === 'player' && g.state !== S_ACTION_MENU && g.state !== S_ATK_SELECT;
+      if (showEndBtn) { this._endBtn(0, y, lw); y += 36 + 8; } else { this._btn = null; }
+      if (g._canRegen) { this._regenLevelBtn(0, y, lw); y += 36 + 8; } else { this._regenBtn = null; }
+      if (showEndBtn || g._canRegen) y += 2;
+    }
 
     /* unit info */
     const u = g.sel || this._unitAt(g, g.cur);
     if (u) y = this._unitPanel(u, px, y, lw - 20);
 
-    /* ── fixed layout constants (computed early so the preview can reference LOG_TOP) ── */
-    const SOUND_Y    = CANVAS_H - 34;
-    const ENDTURN_Y  = SOUND_Y - 46;
-    /* regen button (36px tall + 6px gap) sits between the log and END TURN when available */
-    const LOG_BTM    = ENDTURN_Y - 8 - (g._canRegen ? 42 : 0);
-    const LOG_TOP    = LOG_BTM - 123;  // 123px panel: 14px header + 7 lines×14px + 11px pad
-
     /* terrain — suppressed while a combat/heal/steal forecast is active so the
        forecast always fits between the unit panel and the log without clipping */
     if (g.cur && !g.preview) y = this._terrainPanel(g, px, y, lw - 20);
 
-    /* store sidebar content bottom (local coords) for action menu positioning */
-    this._sidebarContentY = y;
-
-    /* combat / heal / steal preview — pinned to sit just above the log panel */
+    /* combat / heal / steal preview */
     if (g.preview) {
-      const previewH = g.preview.heal ? 70 : g.preview.steal ? 70 : 120;
-      const previewY = Math.min(y, LOG_TOP - previewH - 4);
-      if (previewY > 50) {
-        if (g.preview.heal) { this._healPreview(g.preview, 0, previewY, lw); }
-        else if (g.preview.steal) { this._stealPreview(g.preview, 0, previewY, lw); }
-        else { this._combatPreview(g.preview, 0, previewY, lw); }
-      }
+      if (g.preview.heal)       { this._healPreview(g.preview, 0, y, lw);  y += 70; }
+      else if (g.preview.steal) { this._stealPreview(g.preview, 0, y, lw); y += 70; }
+      else                      { this._combatPreview(g.preview, 0, y, lw); y += 120; }
+      y += 8;
     }
 
-    /* play log */
-    this._playLog(g, 0, LOG_TOP, lw);
-
-    /* regen map button — visible only before the first action on each level */
-    if (g._canRegen) {
-      this._regenLevelBtn(0, LOG_BTM + 4, lw);
-    } else {
-      this._regenBtn = null;
-    }
-
-    /* end-turn button OR history controls */
-    if (g._historyView) {
-      this._historyControls(g, 0, ENDTURN_Y, lw);
-    } else {
-      const showEndBtn = g.phase === 'player' && g.state !== S_ACTION_MENU && g.state !== S_ATK_SELECT;
-      if (showEndBtn) this._endBtn(0, ENDTURN_Y, lw);
-    }
-    this._soundToggle(0, SOUND_Y, lw);
+    /* play log — fills whatever room is left down to the bottom of the
+       pane, so the space freed up above goes toward more visible history
+       rather than sitting blank */
+    this._playLog(g, 0, y, lw, CANVAS_H - 10 - y);
 
     c.restore();
 
@@ -884,8 +894,10 @@ export class Renderer {
     const lw = sw / scale;
     const mw = lw - 20, mh = g.menuOpts.length * itemH + pad * 2;
     const mx = 10;
-    /* place below the stats/terrain panels (tracked by _sidebar, local coords) */
-    const my = (this._sidebarContentY || 340) + 6;
+    /* same "right under the header" spot the END TURN button sits in when
+       it's showing instead (tracked by _sidebar, local coords) — the
+       action menu is only ever open while that button is hidden */
+    const my = this._sidebarTopY || 34;
 
     /* drawn in the same local, unscaled space as _sidebar() — see there */
     c.save();
@@ -922,9 +934,13 @@ export class Renderer {
 
   /* ═══════════ PLAY LOG ═══════════ */
 
-  _playLog(g, sx, y, sw) {
+  _playLog(g, sx, y, sw, maxH) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    const LOG_LINES = 7, LINE_H = 14;
+    const LINE_H = 14;
+    /* fill however much room is actually left above the bottom of the pane
+       instead of a fixed 7 lines — the space freed up by moving the
+       buttons to the top (see _sidebar) goes toward showing more history */
+    const LOG_LINES = maxH ? Math.max(5, Math.min(24, Math.floor((maxH - 14 - 11) / LINE_H))) : 7;
     const panelH = 14 + LOG_LINES * LINE_H + 11;
     const selectedEntry = g._historyView ? g._historyView.entry : null;
     const hasRewind = g.rewindsLeft > 0 && g.snapshots && g.snapshots.length > 0;
@@ -1526,10 +1542,12 @@ export class Renderer {
   /* ═══════════ DRAFT SCREEN ═══════════ */
   _draftScreen(g) {
     const c = this.cx;
+    const CW = this.cv.width, CH = this.cv.height;
+    const portrait = this._draftPortrait;
     c.fillStyle = '#0a0a1a';
-    c.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    c.fillRect(0, 0, CW, CH);
 
-    const mx = CANVAS_W / 2;
+    const mx = CW / 2;
 
     /* title */
     c.textAlign = 'center';
@@ -1541,20 +1559,32 @@ export class Renderer {
 
     /* Lord card (always selected) */
     const lordInfo = CLASS_INFO['LORD'];
-    const lordX = mx - 80, lordY = 76;
-    c.fillStyle = '#1a2a60'; c.fillRect(lordX, lordY, 160, 36);
-    c.strokeStyle = C.GOLD; c.lineWidth = 2; c.strokeRect(lordX, lordY, 160, 36);
+    const lordW = portrait ? Math.min(420, CW - 80) : 160;
+    const lordX = mx - lordW / 2, lordY = 76;
+    c.fillStyle = '#1a2a60'; c.fillRect(lordX, lordY, lordW, 36);
+    c.strokeStyle = C.GOLD; c.lineWidth = 2; c.strokeRect(lordX, lordY, lordW, 36);
     c.fillStyle = C.GOLD; c.font = `9px ${FONT}`; c.textAlign = 'center';
     c.fillText(`\u2605 ${lordInfo.name} - ${lordInfo.w.name}`, mx, lordY + 22);
 
-    /* class cards — 4 columns, wrapping */
+    /* class cards — a single column in portrait (so reading them only ever
+       needs vertical scrolling), 4 columns wrapping in landscape */
     const pool = g._draftPool;
     const picks = g._draftPicks;
-    const cardW = 230, cardH = 140, gap = 12;
-    const cols = 4, rows = Math.ceil(pool.length / cols);
+    const cardH = 140, gap = 12;
+    const cols = portrait ? 1 : 4;
+    const cardW = portrait ? Math.min(660, CW - 80) : 230;
+    const rows = Math.ceil(pool.length / cols);
     const gridW = cols * cardW + (cols - 1) * gap;
-    const startX = (CANVAS_W - gridW) / 2;
+    const startX = (CW - gridW) / 2;
     const startY = 126;
+
+    /* a wide (portrait) card spreads its content across the extra width
+       instead of leaving it blank — bigger text, wider stat columns */
+    const wide = cardW >= 400;
+    const statColW  = wide ? Math.floor((cardW - 28) / 4) : 52;
+    const nameFont  = wide ? 13 : 10;
+    const subFont   = wide ? 9  : 7;
+    const smallFont = wide ? 8  : 6;
 
     const bounds = { cards: [], confirm: null };
 
@@ -1580,9 +1610,9 @@ export class Renderer {
       /* name + weapon */
       c.textAlign = 'left';
       c.fillStyle = selected ? '#60c0ff' : '#c0c0c0';
-      c.font = `10px ${FONT}`;
+      c.font = `${nameFont}px ${FONT}`;
       c.fillText(info.name, cx + 14, cy + 18);
-      c.fillStyle = '#808090'; c.font = `7px ${FONT}`;
+      c.fillStyle = '#808090'; c.font = `${subFont}px ${FONT}`;
       c.fillText(info.w.name + (info.w.heal ? ' (Heal)' : '') + `  Rng:${info.w.rng[0]}-${info.w.rng[1]}`, cx + 14, cy + 32);
 
       /* stats */
@@ -1591,17 +1621,17 @@ export class Renderer {
         ['HP', b.hp], ['STR', b.str], ['MAG', b.mag], ['SKL', b.skl],
         ['SPD', b.spd], ['DEF', b.def], ['RES', b.res], ['MOV', b.mov],
       ];
-      c.font = `6px ${FONT}`;
+      c.font = `${smallFont}px ${FONT}`;
       for (let s = 0; s < stats.length; s++) {
         const scol = s % 4, srow = Math.floor(s / 4);
-        const sx = cx + 14 + scol * 52;
+        const sx = cx + 14 + scol * statColW;
         const sy = cy + 50 + srow * 14;
         c.fillStyle = '#6060a0'; c.fillText(stats[s][0], sx, sy);
         c.fillStyle = '#d0d0d0'; c.fillText(String(stats[s][1]).padStart(2), sx + 24, sy);
       }
 
       /* growth hint */
-      c.fillStyle = '#505060'; c.font = `6px ${FONT}`;
+      c.fillStyle = '#505060'; c.font = `${smallFont}px ${FONT}`;
       const topGrowths = Object.entries(info.gr)
         .filter(([k]) => k !== 'hp')
         .sort((a, b) => b[1] - a[1])
@@ -1619,7 +1649,7 @@ export class Renderer {
         KNIGHT: 'Massive DEF, low SPD. A wall.',
         THIEF: 'Fast & lucky. Can steal enemy items.',
       };
-      c.fillStyle = '#707080'; c.font = `6px ${FONT}`;
+      c.fillStyle = '#707080'; c.font = `${smallFont}px ${FONT}`;
       c.fillText(descs[cls] || '', cx + 14, cy + 106);
 
       /* selection checkmark */
