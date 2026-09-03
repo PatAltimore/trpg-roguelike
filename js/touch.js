@@ -67,6 +67,9 @@ export class TouchController {
     }
   }
 
+  /* public: re-run the fit calculation (e.g. after Game resizes the canvas) */
+  refit() { this._fitToScreen(); }
+
   /* ── Fit the canvas to the screen on load / resize ── */
   _fitToScreen() {
     /* prefer visualViewport dimensions — on mobile these reflect the true

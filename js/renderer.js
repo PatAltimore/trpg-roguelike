@@ -10,6 +10,12 @@ import { CLASS_INFO, DRAFT_POOL } from './units.js';
 
 const FONT = '"Press Start 2P", monospace';
 
+/* Info-pane content never grows wider than this, even when the panel itself
+   is stretched to the full map width (portrait) — keeps text/buttons a
+   sensible reading width instead of stretching edge-to-edge, and is wide
+   enough for the unit stat grid to switch from 2 to 4 columns. */
+const SIDEBAR_CONTENT_W = 420;
+
 export class Renderer {
   constructor(canvas) {
     this.cv = canvas;
@@ -34,16 +40,55 @@ export class Renderer {
     this._regenBtn            = null; /* regen map button (visible at level start only) */
     this._histNavOlder        = null; /* ◄ OLDER button in history banner */
     this._histNavNewer        = null; /* NEWER ► button in history banner */
+
+    /* ── responsive layout ── */
+    this._sideRect    = { x: COLS * TILE, y: 0, w: SIDEBAR_W, h: CANVAS_H }; /* current info-pane rect */
+    this._contentRect = { x: COLS * TILE, w: SIDEBAR_W };                    /* centered content column within it */
+    this.onResize     = null; /* set by Game — called when the canvas backing store is resized */
   }
 
   tick() { this.t++; }
   get endTurnBtn() { return this._btn; }
   get soundBtn()   { return this._sndBtn; }
 
+  /* ═══════════ RESPONSIVE LAYOUT ═══════════
+     Decides whether the info pane sits beside the map (landscape) or
+     below it (portrait), and resizes the canvas backing store to match.
+     Title/Draft/Bonus/Victory keep the fixed widescreen canvas — they're
+     full-bleed art screens with no info-pane concept. */
+  _applyLayout(g) {
+    const vp = window.visualViewport;
+    const vw = vp ? vp.width  : window.innerWidth;
+    const vh = vp ? vp.height : window.innerHeight;
+    const portrait = vh > vw;
+    const gameplay = g.state !== S_TITLE && g.state !== S_DRAFT &&
+                     g.state !== S_BONUS && g.state !== S_VICTORY;
+    const mapW = COLS * TILE, mapH = ROWS * TILE;
+
+    let w, h, side;
+    if (gameplay && portrait) {
+      w = mapW;
+      h = mapH + CANVAS_H;
+      /* panel spans the full map width below it — _sidebar() centers a
+         narrower, readable content column inside this strip */
+      side = { x: 0, y: mapH, w: mapW, h: CANVAS_H };
+    } else {
+      w = CANVAS_W;
+      h = CANVAS_H;
+      side = { x: mapW, y: 0, w: SIDEBAR_W, h: CANVAS_H };
+    }
+
+    this._sideRect = side;
+    const changed = this.cv.width !== w || this.cv.height !== h;
+    if (changed) { this.cv.width = w; this.cv.height = h; }
+    return changed;
+  }
+
   /* ═══════════ MAIN DRAW ═══════════ */
   draw(g) {
     const c = this.cx;
-    c.clearRect(0, 0, CANVAS_W, CANVAS_H);
+    if (this._applyLayout(g) && this.onResize) this.onResize();
+    c.clearRect(0, 0, this.cv.width, this.cv.height);
 
     if (g.state === S_TITLE)   { this._title(g); this._soundToggle(CANVAS_W - SIDEBAR_W, CANVAS_H - 40, SIDEBAR_W); return; }
     if (g.state === S_DRAFT)   { this._draftScreen(g); return; }
@@ -456,10 +501,10 @@ export class Renderer {
   /* ── History map overlay (dim tint + banner with nav buttons) ── */
   _historyOverlay(g) {
     const c = this.cx;
-    const mapW = COLS * TILE;
+    const mapW = COLS * TILE, mapH = ROWS * TILE;
     /* dim the entire map area */
     c.fillStyle = 'rgba(0,0,30,0.38)';
-    c.fillRect(0, 0, mapW, CANVAS_H);
+    c.fillRect(0, 0, mapW, mapH);
     /* top banner */
     c.fillStyle = 'rgba(5,10,40,0.90)';
     c.fillRect(0, 0, mapW, 42);
@@ -603,12 +648,19 @@ export class Renderer {
 
   /* ═══════════ SIDEBAR ═══════════ */
   _sidebar(g) {
-    const c = this.cx, sx = COLS * TILE, sw = SIDEBAR_W, sh = CANVAS_H;
-    c.fillStyle = C.SIDE_BG; c.fillRect(sx, 0, sw, sh);
-    c.strokeStyle = C.SIDE_BD; c.lineWidth = 2; c.strokeRect(sx, 0, sw, sh);
+    const c = this.cx, { x: sx, y: sy, w: sw, h: sh } = this._sideRect;
+    c.fillStyle = C.SIDE_BG; c.fillRect(sx, sy, sw, sh);
+    c.strokeStyle = C.SIDE_BD; c.lineWidth = 2; c.strokeRect(sx, sy, sw, sh);
 
-    let y = 14;
-    const px = sx + 10;
+    /* content column — capped width, centered within the panel strip so
+       text/buttons stay a sensible reading width even when the strip
+       itself has been stretched to the full map width (portrait) */
+    const sw2 = Math.min(sw, SIDEBAR_CONTENT_W);
+    const sx2 = sx + Math.round((sw - sw2) / 2);
+    this._contentRect = { x: sx2, w: sw2 };
+
+    let y = sy + 14;
+    const px = sx2 + 10;
     c.textAlign = 'left';
 
     /* floor / phase / turn */
@@ -635,14 +687,14 @@ export class Renderer {
     c.fillText(`Turn ${g.turn}`, px, y); y += 18;
 
     /* divider */
-    c.fillStyle = C.SIDE_BD; c.fillRect(sx+5, y, sw-10, 1); y += 8;
+    c.fillStyle = C.SIDE_BD; c.fillRect(sx2+5, y, sw2-10, 1); y += 8;
 
     /* unit info */
     const u = g.sel || this._unitAt(g, g.cur);
-    if (u) y = this._unitPanel(u, px, y, sw - 20);
+    if (u) y = this._unitPanel(u, px, y, sw2 - 20);
 
     /* ── fixed layout constants (computed early so the preview can reference LOG_TOP) ── */
-    const SOUND_Y    = CANVAS_H - 34;
+    const SOUND_Y    = sy + sh - 34;
     const ENDTURN_Y  = SOUND_Y - 46;
     /* regen button (36px tall + 6px gap) sits between the log and END TURN when available */
     const LOG_BTM    = ENDTURN_Y - 8 - (g._canRegen ? 42 : 0);
@@ -650,7 +702,7 @@ export class Renderer {
 
     /* terrain — suppressed while a combat/heal/steal forecast is active so the
        forecast always fits between the unit panel and the log without clipping */
-    if (g.cur && !g.preview) y = this._terrainPanel(g, px, y, sw - 20);
+    if (g.cur && !g.preview) y = this._terrainPanel(g, px, y, sw2 - 20);
 
     /* store sidebar content bottom for action menu positioning */
     this._sidebarContentY = y;
@@ -660,30 +712,30 @@ export class Renderer {
       const previewH = g.preview.heal ? 70 : g.preview.steal ? 70 : 120;
       const previewY = Math.min(y, LOG_TOP - previewH - 4);
       if (previewY > 50) {
-        if (g.preview.heal) { this._healPreview(g.preview, sx, previewY, sw); }
-        else if (g.preview.steal) { this._stealPreview(g.preview, sx, previewY, sw); }
-        else { this._combatPreview(g.preview, sx, previewY, sw); }
+        if (g.preview.heal) { this._healPreview(g.preview, sx2, previewY, sw2); }
+        else if (g.preview.steal) { this._stealPreview(g.preview, sx2, previewY, sw2); }
+        else { this._combatPreview(g.preview, sx2, previewY, sw2); }
       }
     }
 
     /* play log */
-    this._playLog(g, sx, LOG_TOP, sw);
+    this._playLog(g, sx2, LOG_TOP, sw2);
 
     /* regen map button — visible only before the first action on each level */
     if (g._canRegen) {
-      this._regenLevelBtn(sx, LOG_BTM + 4, sw);
+      this._regenLevelBtn(sx2, LOG_BTM + 4, sw2);
     } else {
       this._regenBtn = null;
     }
 
     /* end-turn button OR history controls */
     if (g._historyView) {
-      this._historyControls(g, sx, ENDTURN_Y, sw);
+      this._historyControls(g, sx2, ENDTURN_Y, sw2);
     } else {
       const showEndBtn = g.phase === 'player' && g.state !== S_ACTION_MENU && g.state !== S_ATK_SELECT;
-      if (showEndBtn) this._endBtn(sx, ENDTURN_Y, sw);
+      if (showEndBtn) this._endBtn(sx2, ENDTURN_Y, sw2);
     }
-    this._soundToggle(sx, SOUND_Y, sw);
+    this._soundToggle(sx2, SOUND_Y, sw2);
   }
 
   _unitAt(g, cur) {
@@ -714,12 +766,15 @@ export class Renderer {
     c.fillStyle = '#fff'; c.font = '6px monospace';
     c.fillText(`${u.hp}/${u.maxHp}`, x+2, y+7); y += 16;
 
-    /* stats grid */
+    /* stats grid — spreads to 4 columns when the panel has the width for it
+       (portrait's wide, centered content column) instead of always 2 */
     const stats = [['STR',u.str],['MAG',u.mag],['SKL',u.skl],['SPD',u.spd],['LCK',u.lck],['DEF',u.def],['RES',u.res],['MOV',u.mov]];
+    const cols = w >= 340 ? 4 : 2;
+    const colW = cols === 4 ? Math.floor(w / cols) : 96;
     c.font = `7px ${FONT}`;
     for (let i = 0; i < stats.length; i++) {
-      const col = i % 2, row = (i / 2) | 0;
-      const sx = x + col * 96, sy = y + row * 16;
+      const col = i % cols, row = (i / cols) | 0;
+      const sx = x + col * colW, sy = y + row * 16;
       c.fillStyle = '#6060a0'; c.fillText(stats[i][0], sx, sy);
       c.fillStyle = C.TXT;     c.fillText(String(stats[i][1]).padStart(2), sx + 38, sy);
     }
@@ -784,8 +839,7 @@ export class Renderer {
   _menu(g) {
     const c = this.cx;
     const itemH = 40, pad = 12;
-    const sx = COLS * TILE;
-    const sw = SIDEBAR_W;
+    const { x: sx, w: sw } = this._contentRect;
     const mw = sw - 20, mh = g.menuOpts.length * itemH + pad * 2;
     const mx = sx + 10;
     /* place below the stats/terrain panels (tracked by _sidebar) */
@@ -1201,9 +1255,10 @@ export class Renderer {
     }
 
     /* draw walker units (including off-screen partial visibility at edges) */
+    const mapH = ROWS * TILE;
     c.save();
     c.beginPath();
-    c.rect(0, 0, COLS * TILE, CANVAS_H);
+    c.rect(0, 0, COLS * TILE, mapH);
     c.clip();
     for (const w of tr.walkers) {
       if (w.unit.alive) this._unit(w.unit, g);
@@ -1214,21 +1269,21 @@ export class Renderer {
     const mx = (COLS * TILE) / 2;
     const pulse = 0.7 + Math.sin(this.t * 0.08) * 0.3;
     c.fillStyle = `rgba(0,0,0,${0.5 * pulse})`;
-    c.fillRect(0, CANVAS_H / 2 - 20, COLS * TILE, 40);
+    c.fillRect(0, mapH / 2 - 20, COLS * TILE, 40);
     c.textAlign = 'center';
     c.fillStyle = C.GOLD;
     c.font = `12px ${FONT}`;
     if (tr.dir === 'out') {
-      c.fillText('MARCHING ONWARD...', mx, CANVAS_H / 2 + 5);
+      c.fillText('MARCHING ONWARD...', mx, mapH / 2 + 5);
     } else {
-      c.fillText(g.floor === 0 ? 'TUTORIAL' : `LEVEL ${g.floor}`, mx, CANVAS_H / 2 + 5);
+      c.fillText(g.floor === 0 ? 'TUTORIAL' : `LEVEL ${g.floor}`, mx, mapH / 2 + 5);
     }
   }
 
   _overlay(g) {
-    const c = this.cx;
-    c.fillStyle = 'rgba(0,0,0,0.65)'; c.fillRect(0, 0, CANVAS_W, CANVAS_H);
-    const mx = CANVAS_W / 2, my = CANVAS_H / 2;
+    const c = this.cx, W = this.cv.width, H = this.cv.height;
+    c.fillStyle = 'rgba(0,0,0,0.65)'; c.fillRect(0, 0, W, H);
+    const mx = W / 2, my = H / 2;
     c.textAlign = 'center';
 
     if (g.state === S_WIN) {

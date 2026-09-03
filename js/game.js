@@ -1,5 +1,5 @@
 import {
-  TILE, COLS, ROWS, CANVAS_W, CANVAS_H,
+  TILE, COLS, ROWS,
   S_TITLE, S_IDLE, S_UNIT_SEL, S_ACTION_MENU, S_ATK_SELECT,
   S_COMBAT_ANIM, S_ENEMY_TURN, S_WIN, S_LOSE,
   S_TRANS_OUT, S_TRANS_IN, S_VICTORY, S_DRAFT, S_BONUS, FINAL_FLOOR,
@@ -118,6 +118,9 @@ class Game {
 
     /* mobile touch support — pinch-zoom, pan, tap-to-play */
     this.touch = new TouchController(this.cv, this);
+    /* re-fit the view whenever the renderer resizes the canvas (orientation
+       change flipping the info pane between beside/below the map) */
+    this.ren.onResize = () => this.touch.refit();
     this._loop();
   }
 
@@ -275,8 +278,8 @@ class Game {
   /* ═══════════ INPUT ═══════════ */
   _px(e) {
     const r = this.cv.getBoundingClientRect();
-    return { px: (e.clientX - r.left) * (CANVAS_W / r.width),
-             py: (e.clientY - r.top)  * (CANVAS_H / r.height) };
+    return { px: (e.clientX - r.left) * (this.cv.width  / r.width),
+             py: (e.clientY - r.top)  * (this.cv.height / r.height) };
   }
 
   _hover(e) {
@@ -298,7 +301,6 @@ class Game {
   _click(e) {
     const { px, py } = this._px(e);
     const cx = Math.floor(px / TILE), cy = Math.floor(py / TILE);
-    const mapW = COLS * TILE;
 
     /* sound toggle — always available */
     const sb = this.ren.soundBtn;
@@ -448,7 +450,7 @@ class Game {
     }
 
     /* sidebar buttons (only in idle / unit-select, not during action menu or atk select) */
-    if (px >= mapW && this.phase === 'player') {
+    if (this.phase === 'player') {
       const b = this.ren.endTurnBtn;
       if (b && px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) { this._endPlayerTurn(); return; }
       const rb = this.ren._regenBtn;
