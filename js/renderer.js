@@ -18,6 +18,13 @@ const FONT = '"Press Start 2P", monospace';
 const SIDEBAR_MIN_SCALE = 2.0;
 const SIDEBAR_SCALE_CAP = 2.6;
 
+/* Portrait title-screen canvas — genuinely portrait-shaped (unlike the
+   1024×600 landscape one) so the starfield background, battle scene and
+   buttons all fill a tall phone screen instead of sitting in a small
+   landscape rectangle in the middle of it. */
+const TITLE_PORTRAIT_W = 480;
+const TITLE_PORTRAIT_H = 820;
+
 export class Renderer {
   constructor(canvas) {
     this.cv = canvas;
@@ -42,6 +49,7 @@ export class Renderer {
     this._regenBtn            = null; /* regen map button (visible at level start only) */
     this._histNavOlder        = null; /* ◄ OLDER button in history banner */
     this._histNavNewer        = null; /* NEWER ► button in history banner */
+    this._menuGeom            = { rowOffset: 20, itemH: 40 }; /* action-menu row geometry (see _menu) */
 
     /* ── responsive layout ── */
     this._sideRect = { x: COLS * TILE, y: 0, w: SIDEBAR_W, h: CANVAS_H, scale: 1 }; /* current info-pane rect */
@@ -55,9 +63,10 @@ export class Renderer {
   /* ═══════════ RESPONSIVE LAYOUT ═══════════
      Decides whether the info pane sits beside the map (landscape) or
      below it (portrait), and resizes the canvas backing store to match.
-     The team-draft screen also reflows to a single column in portrait.
-     Title/Bonus/Victory keep the fixed widescreen canvas — they're
-     full-bleed art screens with no responsive layout of their own. */
+     The team-draft screen reflows to a single column in portrait, and the
+     title screen switches to a genuinely portrait-shaped canvas.
+     Bonus/Victory keep the fixed widescreen canvas — they're full-bleed
+     art screens with no responsive layout of their own. */
   _applyLayout(g) {
     const vp = window.visualViewport;
     const vw = vp ? vp.width  : window.innerWidth;
@@ -69,6 +78,7 @@ export class Renderer {
 
     let w, h;
     this._draftPortrait = false;
+    this._titlePortrait = false;
 
     if (gameplay && portrait) {
       /* Grow the panel's own font/spacing scale to fill the screen — a
@@ -92,6 +102,10 @@ export class Renderer {
       this._draftPortrait = true;
       w = mapW;
       h = this._draftPortraitHeight(g);
+    } else if (g.state === S_TITLE && portrait) {
+      this._titlePortrait = true;
+      w = TITLE_PORTRAIT_W;
+      h = TITLE_PORTRAIT_H;
     } else {
       w = CANVAS_W;
       h = CANVAS_H;
@@ -108,7 +122,7 @@ export class Renderer {
      never changes mid-screen — no resize jank while picking). */
   _draftPortraitHeight(g) {
     const n = (g._draftPool && g._draftPool.length) || 7;
-    const cardH = 140, gap = 12, startY = 126, footerH = 90;
+    const cardH = 220, gap = 12, startY = 160, footerH = 110;
     return startY + n * (cardH + gap) - gap + footerH;
   }
 
@@ -118,7 +132,11 @@ export class Renderer {
     if (this._applyLayout(g) && this.onResize) this.onResize();
     c.clearRect(0, 0, this.cv.width, this.cv.height);
 
-    if (g.state === S_TITLE)   { this._title(g); this._soundToggle(CANVAS_W - SIDEBAR_W, CANVAS_H - 40, SIDEBAR_W); return; }
+    if (g.state === S_TITLE) {
+      this._title(g);
+      this._soundToggle(0, this._titlePortrait ? 12 : CANVAS_H - 40, this.cv.width);
+      return;
+    }
     if (g.state === S_DRAFT)   { this._draftScreen(g); return; }
     if (g.state === S_BONUS)   { this._bonusScreen(g); return; }
     if (g.state === S_VICTORY) { this._victoryScreen(g); return; }
@@ -159,18 +177,22 @@ export class Renderer {
   /* ═══════════ TITLE ═══════════ */
   _title(g) {
     const c = this.cx;
+    const W = this.cv.width, H = this.cv.height;
     c.fillStyle = '#0a0a1a';
-    c.fillRect(0, 0, CANVAS_W, CANVAS_H);
+    c.fillRect(0, 0, W, H);
 
-    /* stars */
+    /* stars — fill whatever shape the canvas actually is (portrait or
+       landscape) so the starfield is never a landscape-only backdrop */
     c.fillStyle = '#fff';
-    for (let i = 0; i < 120; i++) {
-      const sx = (i * 137 + 50) % CANVAS_W;
-      const sy = (i * 97  + 30) % CANVAS_H;
+    for (let i = 0; i < 160; i++) {
+      const sx = (i * 137 + 50) % W;
+      const sy = (i * 97  + 30) % H;
       c.fillRect(sx, sy, 1 + (i % 2), 1 + (i % 2));
     }
 
-    const mx = CANVAS_W / 2, my = CANVAS_H / 2;
+    if (this._titlePortrait) { this._titlePortraitLayout(g, W, H); return; }
+
+    const mx = W / 2, my = H / 2;
 
     /* ── 8-bit battle scene ── */
     this._titleBattle(c, mx, my);
@@ -243,6 +265,94 @@ export class Renderer {
     c.fillText('Select unit \u2192 click destination \u2192 Attack / Wait', mx, by3 + bh + 20);
     c.fillText('Defeat all enemies to advance.  Lord dies = Game Over.', mx, by3 + bh + 36);
     c.fillText('Weapon triangle: Sword > Axe > Lance > Sword', mx, by3 + bh + 52);
+  }
+
+  /* Portrait title layout — a genuinely tall/narrow arrangement rather
+     than the landscape design shrunk to fit. Buttons were already stacked
+     vertically, so the main changes are: bigger fonts/buttons throughout,
+     and the battle scene (self-contained, drawn relative to its own
+     center) scaled up in place via a transform instead of redrawn. */
+  _titlePortraitLayout(g, W, H) {
+    const c = this.cx;
+    const mx = W / 2;
+    c.textAlign = 'center';
+
+    /* title */
+    c.fillStyle = C.GOLD;
+    c.font = `28px ${FONT}`;
+    c.fillText('EMBLEM TACTICS', mx, 76);
+    c.fillStyle = '#5050cc';
+    c.font = `12px ${FONT}`;
+    c.fillText('ROGUELIKE TACTICAL RPG', mx, 104);
+
+    /* battle scene, scaled up around its own center point */
+    const bScale = 1.25, bCenterY = 300;
+    c.save();
+    c.translate(mx, bCenterY);
+    c.scale(bScale, bScale);
+    this._titleBattle(c, 0, 0);
+    c.restore();
+
+    /* menu buttons */
+    const bw = 280, bh = 44, gap = 14;
+    const bx = mx - bw / 2;
+    const hasSave = g && g._hasSave;
+
+    const startY = 460;
+    const contY = hasSave ? startY : null;
+    const by0   = hasSave ? startY + bh + gap : startY;  // TUTORIAL
+    const by1   = by0 + bh + gap;                         // EASY
+    const by2   = by1 + bh + gap;                         // MEDIUM
+    const by3   = by2 + bh + gap;                         // HARD
+
+    /* CONTINUE (only when a save exists) */
+    if (hasSave) {
+      c.fillStyle = '#1a1505'; c.fillRect(bx, contY, bw, bh);
+      c.strokeStyle = C.GOLD;  c.lineWidth = 2; c.strokeRect(bx, contY, bw, bh);
+      c.fillStyle = C.GOLD; c.font = `13px ${FONT}`; c.textAlign = 'center';
+      c.fillText('CONTINUE', mx, contY + bh / 2 + 5);
+    }
+
+    /* TUTORIAL button */
+    c.fillStyle = '#1a2a60'; c.fillRect(bx, by0, bw, bh);
+    c.strokeStyle = '#4060d0'; c.lineWidth = 2; c.strokeRect(bx, by0, bw, bh);
+    c.fillStyle = '#80b0ff'; c.font = `13px ${FONT}`; c.textAlign = 'center';
+    c.fillText('TUTORIAL', mx, by0 + bh / 2 + 5);
+
+    /* EASY button */
+    c.fillStyle = '#1a3010'; c.fillRect(bx, by1, bw, bh);
+    c.strokeStyle = '#40a030'; c.lineWidth = 2; c.strokeRect(bx, by1, bw, bh);
+    c.fillStyle = '#60e040'; c.font = `13px ${FONT}`;
+    c.fillText('EASY', mx, by1 + bh / 2 + 5);
+
+    /* MEDIUM button */
+    c.fillStyle = '#2a1a10'; c.fillRect(bx, by2, bw, bh);
+    c.strokeStyle = '#c08030'; c.lineWidth = 2; c.strokeRect(bx, by2, bw, bh);
+    c.fillStyle = C.GOLD; c.font = `13px ${FONT}`;
+    c.fillText('MEDIUM', mx, by2 + bh / 2 + 5);
+
+    /* HARD button */
+    c.fillStyle = '#301010'; c.fillRect(bx, by3, bw, bh);
+    c.strokeStyle = '#c03030'; c.lineWidth = 2; c.strokeRect(bx, by3, bw, bh);
+    c.fillStyle = '#ff4040'; c.font = `13px ${FONT}`;
+    c.fillText('HARD', mx, by3 + bh / 2 + 5);
+
+    /* store button bounds for click detection — already absolute, no
+       transform is active here (only the battle scene above used one,
+       and it was restored) */
+    this._titleBtns = {
+      tutorial: { x: bx, y: by0, w: bw, h: bh },
+      easy:     { x: bx, y: by1, w: bw, h: bh },
+      medium:   { x: bx, y: by2, w: bw, h: bh },
+      hard:     { x: bx, y: by3, w: bw, h: bh },
+    };
+    if (hasSave) this._titleBtns.cont = { x: bx, y: contY, w: bw, h: bh };
+
+    c.fillStyle = '#707070';
+    c.font = `7px ${FONT}`;
+    c.fillText('Select unit → click destination → Attack / Wait', mx, by3 + bh + 26);
+    c.fillText('Defeat all enemies to advance.  Lord dies = Game Over.', mx, by3 + bh + 44);
+    c.fillText('Weapon triangle: Sword > Axe > Lance > Sword', mx, by3 + bh + 62);
   }
 
   /* ── Pixel art battle scene for title screen ── */
@@ -889,7 +999,14 @@ export class Renderer {
 
   _menu(g) {
     const c = this.cx;
-    const itemH = 40, pad = 12;
+    /* portrait gets a much bigger menu on top of the ambient sidebar scale
+       it already inherits below — the action menu is the thing tapped
+       most often mid-battle, so it gets the biggest readability boost */
+    const boost    = this._sideRect.scale > 1;
+    const itemH    = boost ? 108 : 40;
+    const pad      = boost ? 26  : 12;
+    const headerFont = boost ? 30 : 8;
+    const itemFont   = boost ? 38 : 10;
     const { x: sx, y: sy, w: sw, scale } = this._sideRect;
     const lw = sw / scale;
     const mw = lw - 20, mh = g.menuOpts.length * itemH + pad * 2;
@@ -909,11 +1026,11 @@ export class Renderer {
     c.strokeStyle = '#6060d0'; c.lineWidth = 2; c.strokeRect(mx - 2, my, mw + 4, mh);
 
     /* header */
-    c.fillStyle = '#8080cc'; c.font = `8px ${FONT}`; c.textAlign = 'center';
-    c.fillText('ACTION', lw / 2, my + 12);
+    c.fillStyle = '#8080cc'; c.font = `${headerFont}px ${FONT}`; c.textAlign = 'center';
+    c.fillText('ACTION', lw / 2, my + (boost ? 34 : 12));
 
     g.menuOpts.forEach((opt, i) => {
-      const oy = my + pad + 8 + i * itemH;
+      const oy = my + pad + (boost ? 20 : 8) + i * itemH;
       /* highlight */
       c.fillStyle = opt.on ? '#202060' : '#101020';
       c.fillRect(mx + 2, oy - 6, mw - 4, itemH - 6);
@@ -922,14 +1039,17 @@ export class Renderer {
         c.strokeRect(mx + 2, oy - 6, mw - 4, itemH - 6);
       }
       c.fillStyle = opt.on ? '#ffffff' : '#404050';
-      c.font = `10px ${FONT}`; c.textAlign = 'center';
-      c.fillText(opt.label, lw / 2, oy + 14);
+      c.font = `${itemFont}px ${FONT}`; c.textAlign = 'center';
+      c.fillText(opt.label, lw / 2, oy + (boost ? 40 : 14));
     });
 
     c.restore();
 
     /* store bounds for click detection — converted to absolute canvas pixels */
     g._menuBounds = { x: sx + (mx-2)*scale, y: sy + my*scale, w: (mw+4)*scale, h: mh*scale };
+    /* local (unscaled) row geometry — game.js needs this to figure out
+       which option a click landed on, since it only sees absolute pixels */
+    this._menuGeom = { rowOffset: pad + (boost ? 20 : 8), itemH };
   }
 
   /* ═══════════ PLAY LOG ═══════════ */
@@ -1551,40 +1671,51 @@ export class Renderer {
 
     /* title */
     c.textAlign = 'center';
-    c.fillStyle = C.GOLD; c.font = `18px ${FONT}`;
-    c.fillText('DRAFT YOUR TEAM', mx, 40);
+    c.fillStyle = C.GOLD; c.font = `${portrait ? 24 : 18}px ${FONT}`;
+    c.fillText('DRAFT YOUR TEAM', mx, portrait ? 46 : 40);
 
-    c.fillStyle = '#8080c0'; c.font = `8px ${FONT}`;
-    c.fillText('Lord always leads. Pick 3 more units.', mx, 60);
+    c.fillStyle = '#8080c0'; c.font = `${portrait ? 12 : 8}px ${FONT}`;
+    c.fillText('Lord always leads. Pick 3 more units.', mx, portrait ? 70 : 60);
 
     /* Lord card (always selected) */
     const lordInfo = CLASS_INFO['LORD'];
     const lordW = portrait ? Math.min(420, CW - 80) : 160;
-    const lordX = mx - lordW / 2, lordY = 76;
-    c.fillStyle = '#1a2a60'; c.fillRect(lordX, lordY, lordW, 36);
-    c.strokeStyle = C.GOLD; c.lineWidth = 2; c.strokeRect(lordX, lordY, lordW, 36);
-    c.fillStyle = C.GOLD; c.font = `9px ${FONT}`; c.textAlign = 'center';
-    c.fillText(`\u2605 ${lordInfo.name} - ${lordInfo.w.name}`, mx, lordY + 22);
+    const lordH = portrait ? 52 : 36;
+    const lordX = mx - lordW / 2, lordY = portrait ? 88 : 76;
+    c.fillStyle = '#1a2a60'; c.fillRect(lordX, lordY, lordW, lordH);
+    c.strokeStyle = C.GOLD; c.lineWidth = 2; c.strokeRect(lordX, lordY, lordW, lordH);
+    c.fillStyle = C.GOLD; c.font = `${portrait ? 15 : 9}px ${FONT}`; c.textAlign = 'center';
+    c.fillText(`\u2605 ${lordInfo.name} - ${lordInfo.w.name}`, mx, lordY + lordH / 2 + 5);
 
     /* class cards — a single column in portrait (so reading them only ever
        needs vertical scrolling), 4 columns wrapping in landscape */
     const pool = g._draftPool;
     const picks = g._draftPicks;
-    const cardH = 140, gap = 12;
+    const cardH = portrait ? 220 : 140, gap = 12;
     const cols = portrait ? 1 : 4;
     const cardW = portrait ? Math.min(660, CW - 80) : 230;
     const rows = Math.ceil(pool.length / cols);
     const gridW = cols * cardW + (cols - 1) * gap;
     const startX = (CW - gridW) / 2;
-    const startY = 126;
+    const startY = lordY + lordH + 20;
 
-    /* a wide (portrait) card spreads its content across the extra width
-       instead of leaving it blank — bigger text, wider stat columns */
+    /* portrait cards get noticeably bigger text throughout — both because
+       they're wider (so the extra width doesn't sit blank) and because
+       phone-screen readability is the priority here over density */
     const wide = cardW >= 400;
     const statColW  = wide ? Math.floor((cardW - 28) / 4) : 52;
-    const nameFont  = wide ? 13 : 10;
-    const subFont   = wide ? 9  : 7;
-    const smallFont = wide ? 8  : 6;
+    const nameFont  = portrait ? 19 : 10;
+    const subFont   = portrait ? 14 : 7;
+    const smallFont = portrait ? 12 : 6;
+    /* row Y-offsets (from the card's top) scale up together with the fonts
+       above so lines don't crowd each other as they get taller */
+    const rowName  = portrait ? 30  : 18;
+    const rowSub   = portrait ? 52  : 32;
+    const rowStat1 = portrait ? 84  : 50;
+    const rowStat2 = portrait ? 110 : 64;
+    const rowGrow  = portrait ? 152 : 90;
+    const rowDesc  = portrait ? 178 : 106;
+    const statValOffset = portrait ? 38 : 24;
 
     const bounds = { cards: [], confirm: null };
 
@@ -1611,9 +1742,9 @@ export class Renderer {
       c.textAlign = 'left';
       c.fillStyle = selected ? '#60c0ff' : '#c0c0c0';
       c.font = `${nameFont}px ${FONT}`;
-      c.fillText(info.name, cx + 14, cy + 18);
+      c.fillText(info.name, cx + 14, cy + rowName);
       c.fillStyle = '#808090'; c.font = `${subFont}px ${FONT}`;
-      c.fillText(info.w.name + (info.w.heal ? ' (Heal)' : '') + `  Rng:${info.w.rng[0]}-${info.w.rng[1]}`, cx + 14, cy + 32);
+      c.fillText(info.w.name + (info.w.heal ? ' (Heal)' : '') + `  Rng:${info.w.rng[0]}-${info.w.rng[1]}`, cx + 14, cy + rowSub);
 
       /* stats */
       const b = info.base;
@@ -1625,9 +1756,9 @@ export class Renderer {
       for (let s = 0; s < stats.length; s++) {
         const scol = s % 4, srow = Math.floor(s / 4);
         const sx = cx + 14 + scol * statColW;
-        const sy = cy + 50 + srow * 14;
+        const sy = srow === 0 ? cy + rowStat1 : cy + rowStat2;
         c.fillStyle = '#6060a0'; c.fillText(stats[s][0], sx, sy);
-        c.fillStyle = '#d0d0d0'; c.fillText(String(stats[s][1]).padStart(2), sx + 24, sy);
+        c.fillStyle = '#d0d0d0'; c.fillText(String(stats[s][1]).padStart(2), sx + statValOffset, sy);
       }
 
       /* growth hint */
@@ -1637,7 +1768,7 @@ export class Renderer {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)
         .map(([k]) => k.toUpperCase());
-      c.fillText('Best: ' + topGrowths.join(', '), cx + 14, cy + 90);
+      c.fillText('Best: ' + topGrowths.join(', '), cx + 14, cy + rowGrow);
 
       /* description */
       const descs = {
@@ -1650,12 +1781,12 @@ export class Renderer {
         THIEF: 'Fast & lucky. Can steal enemy items.',
       };
       c.fillStyle = '#707080'; c.font = `${smallFont}px ${FONT}`;
-      c.fillText(descs[cls] || '', cx + 14, cy + 106);
+      c.fillText(descs[cls] || '', cx + 14, cy + rowDesc);
 
       /* selection checkmark */
       if (selected) {
-        c.fillStyle = '#40ff80'; c.font = `14px ${FONT}`; c.textAlign = 'right';
-        c.fillText('\u2713', cx + cardW - 10, cy + 22);
+        c.fillStyle = '#40ff80'; c.font = `${portrait ? 22 : 14}px ${FONT}`; c.textAlign = 'right';
+        c.fillText('\u2713', cx + cardW - 10, cy + rowName + 4);
       }
 
       bounds.cards.push({ x: cx, y: cy, w: cardW, h: cardH });
@@ -1664,21 +1795,21 @@ export class Renderer {
     /* pick counter */
     c.textAlign = 'center';
     c.fillStyle = picks.length === 3 ? '#40ff80' : '#c0c0c0';
-    c.font = `9px ${FONT}`;
-    c.fillText(`${picks.length} / 3 selected`, mx, startY + rows * (cardH + gap) + 20);
+    c.font = `${portrait ? 14 : 9}px ${FONT}`;
+    c.fillText(`${picks.length} / 3 selected`, mx, startY + rows * (cardH + gap) + (portrait ? 26 : 20));
 
     /* confirm button */
-    const btnW = 200, btnH = 36;
+    const btnW = portrait ? 260 : 200, btnH = portrait ? 50 : 36;
     const btnX = mx - btnW / 2;
-    const btnY = startY + rows * (cardH + gap) + 34;
+    const btnY = startY + rows * (cardH + gap) + (portrait ? 44 : 34);
     const canConfirm = picks.length === 3;
     c.fillStyle = canConfirm ? '#103820' : '#101010';
     c.fillRect(btnX, btnY, btnW, btnH);
     c.strokeStyle = canConfirm ? '#40c060' : '#303030';
     c.lineWidth = 2; c.strokeRect(btnX, btnY, btnW, btnH);
     c.fillStyle = canConfirm ? '#60ff80' : '#404040';
-    c.font = `10px ${FONT}`;
-    c.fillText('CONFIRM', mx, btnY + 23);
+    c.font = `${portrait ? 15 : 10}px ${FONT}`;
+    c.fillText('CONFIRM', mx, btnY + btnH / 2 + 5);
 
     if (canConfirm) bounds.confirm = { x: btnX, y: btnY, w: btnW, h: btnH };
 

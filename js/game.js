@@ -505,11 +505,13 @@ class Game {
     const b = this._menuBounds;
     if (!b || px < b.x || px > b.x + b.w || py < b.y || py > b.y + b.h) return;
 
-    /* menu rows are laid out in the renderer's local (unscaled) units —
-       20px header offset, 40px per row — then stretched by the sidebar's
-       current font/spacing scale, so undo that scale to find the row */
+    /* menu rows are laid out in the renderer's local (unscaled) units,
+       then stretched by the sidebar's current font/spacing scale — undo
+       that scale, using the row geometry the renderer actually drew with
+       (it varies: portrait's action menu is much bigger, see _menu()) */
     const scale = this.ren._sideRect.scale;
-    const idx = Math.floor((py - b.y - 20 * scale) / (40 * scale));
+    const { rowOffset, itemH } = this.ren._menuGeom || { rowOffset: 20, itemH: 40 };
+    const idx = Math.floor((py - b.y - rowOffset * scale) / (itemH * scale));
     if (idx < 0 || idx >= this.menuOpts.length) return;
     const opt = this.menuOpts[idx];
     if (!opt.on) return;
