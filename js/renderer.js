@@ -75,6 +75,7 @@ export class Renderer {
 
     /* ── responsive layout ── */
     this._sideRect = { x: COLS * TILE, y: 0, w: SIDEBAR_W, h: CANVAS_H, scale: 1 }; /* current info-pane rect */
+    this._useCoverFit = false; /* true in portrait gameplay — see _applyLayout */
     this.onResize  = null; /* set by Game — called when the canvas backing store is resized */
   }
 
@@ -101,6 +102,12 @@ export class Renderer {
     let w, h;
     this._draftPortrait = false;
     this._titlePortrait = false;
+    /* gameplay's portrait canvas is deliberately much taller than the
+       viewport (map on top, full-width info pane below) — told to
+       TouchController so it can fill the screen edge-to-edge on the map
+       instead of letterboxing to fit the whole tall canvas in view; see
+       the comment in touch.js._fitToScreen(). */
+    this._useCoverFit = gameplay && portrait;
 
     if (gameplay && portrait) {
       /* Grow the panel's own font/spacing scale to fill the screen — a
@@ -786,9 +793,13 @@ export class Renderer {
     c.fillStyle = pct > 0.5 ? C.HP_OK : pct > 0.25 ? C.HP_MID : C.HP_LOW;
     c.fillRect(x+3, by, Math.floor(bw * pct), 5);
 
-    /* label */
-    c.fillStyle = '#fff'; c.font = 'bold 9px monospace'; c.textAlign = 'center';
-    c.fillText(u.lbl, x + T/2, y + T - 10);
+    /* label — outlined so the letter reads clearly against whatever body/
+       terrain color happens to be behind it, not just relying on size */
+    c.font = 'bold 12px monospace'; c.textAlign = 'center';
+    c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,0.85)';
+    c.strokeText(u.lbl, x + T/2, y + T - 9);
+    c.fillStyle = '#fff';
+    c.fillText(u.lbl, x + T/2, y + T - 9);
   }
 
   _helm(k) {

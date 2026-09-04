@@ -90,11 +90,23 @@ export class TouchController {
        often much wider than a phone) and pan were computed against the
        unclamped value, the canvas would render bigger than planned here
        yet stay positioned/centered as if it hadn't been, landing off-center */
-    this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.min(vw / cw, vh / ch)));
+    /* Gameplay's portrait canvas (map on top, full-width info pane below)
+       is deliberately much taller than it needs to be for the map alone —
+       the pane keeps growing to fit bigger stat/log text. Fitting the
+       *whole* canvas in view (like every other screen does) would zoom
+       the map itself down to compensate, undoing that work. Cover-fit
+       instead: zoom so the map fills the screen edge-to-edge, and let the
+       pane's excess height run off the bottom — it's still reachable by
+       panning down, same as the draft/title screens already rely on. */
+    const cover = this.game.ren && this.game.ren._useCoverFit;
+    const naturalZoom = cover ? Math.max(vw / cw, vh / ch) : Math.min(vw / cw, vh / ch);
+    this.zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, naturalZoom));
     this._fitZoom = this.zoom;
-    /* center the canvas */
     this.panX = (vw - cw * this.zoom) / 2;
-    this.panY = (vh - ch * this.zoom) / 2;
+    /* centering panY would crop evenly into the map's own top edge along
+       with the pane's bottom — anchor to the top (panY 0, canvas-space
+       y=0 at screen y=0) instead so the map is always shown in full */
+    this.panY = cover ? 0 : (vh - ch * this.zoom) / 2;
     this._applyTransform();
   }
 
