@@ -1385,12 +1385,33 @@ export class Renderer {
     const mapH = ROWS * TILE;
     const { atk, def, af, df } = g._atkConfirm;
 
-    /* dim the map */
+    /* dim the map — full-map dimming, not part of the dialog box below,
+       so it's drawn before the scale transform and unaffected by it */
     c.fillStyle = 'rgba(0,0,0,0.65)';
     c.fillRect(0, 0, mapW, mapH);
 
-    /* box */
+    /* The dialog aims to match the info pane's own font boost (ambient
+       sidebar scale × INFO_BOOST in portrait) — drawn at its normal size
+       then stretched from the map's center point, the same technique the
+       sidebar uses so none of the many offsets below need to be
+       individually rewritten. Unlike the sidebar, though, this dialog is
+       confined to the fixed-size map area — it can't grow the canvas to
+       make room the way the pane does. The full sidebar boost overflowed
+       the map badly (confirmed: ~1520×752 against an 800×600 map, with
+       the CANCEL button pushed off-screen entirely), so it's capped at
+       whatever still leaves the box safely inside the map — as close to
+       the pane's size as this dialog can actually get. */
     const ow = 380, oh = 188;
+    const scale = this._sideRect.scale;
+    const maxSafeBoost = Math.min((mapW * 0.92) / ow, (mapH * 0.92) / oh);
+    const boost = scale > 1 ? Math.min(scale * INFO_BOOST, maxSafeBoost) : 1;
+    const mx0 = mapW / 2, my0 = mapH / 2;
+    c.save();
+    c.translate(mx0, my0);
+    c.scale(boost, boost);
+    c.translate(-mx0, -my0);
+
+    /* box */
     const ox = Math.round((mapW - ow) / 2);
     const oy = Math.round((mapH - oh) / 2);
     c.fillStyle = '#07071a'; c.fillRect(ox, oy, ow, oh);
@@ -1451,8 +1472,16 @@ export class Renderer {
     c.fillStyle = '#ff6060';
     c.fillText('CANCEL', cBx + btnW / 2, btnY + 19);
 
-    this._atkConfirmAttackBtn = { x: aBx, y: btnY, w: btnW, h: btnH };
-    this._atkConfirmCancelBtn = { x: cBx, y: btnY, w: btnW, h: btnH };
+    c.restore();
+
+    /* convert the button bounds recorded above (in the dialog's local,
+       unscaled space) to absolute canvas pixels — game.js hit-tests in
+       absolute space, same as the sidebar's own bounds conversion */
+    const toAbs = (lx2, ly2, lw2, lh2) => ({
+      x: mx0 + (lx2 - mx0) * boost, y: my0 + (ly2 - my0) * boost, w: lw2 * boost, h: lh2 * boost,
+    });
+    this._atkConfirmAttackBtn = toAbs(aBx, btnY, btnW, btnH);
+    this._atkConfirmCancelBtn = toAbs(cBx, btnY, btnW, btnH);
   }
 
   /* HP bar that also shows predicted-loss zone after an attack */
