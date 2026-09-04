@@ -18,6 +18,28 @@ const FONT = '"Press Start 2P", monospace';
 const SIDEBAR_MIN_SCALE = 2.0;
 const SIDEBAR_SCALE_CAP = 2.6;
 
+/* The info panel's display content — unit stats, terrain, combat/heal/
+   steal forecasts, play log — gets a further boost on top of the ambient
+   scale above, in portrait only. The action buttons stay at the ambient
+   scale alone (confirmed a good size already), so this only multiplies
+   the font/spacing constants those specific draw calls use; it does not
+   touch their width, so it can't overflow the pane.
+   Because it needs more vertical room, the portrait sidebar's local
+   height budget grows from CANVAS_H to PORTRAIT_INFO_BUDGET (see
+   _applyLayout) — and since the map's own fit-to-screen zoom is bound by
+   *whichever* of width or height is tighter, growing that budget past
+   ~mapW/mapH-and-viewport-aspect-implied headroom makes the fit go
+   height-bound and shrinks the map. PORTRAIT_INFO_BUDGET is kept close to
+   the actual worst-case content height (see the comment above
+   _sidebar()'s budget math) specifically to avoid that: pushing it much
+   higher doesn't make the text any bigger on screen (the shrinking zoom
+   cancels the boost back out) and can shrink the map severely (confirmed
+   experimentally at INFO_BOOST=4 / budget=2200 — the map nearly
+   disappeared off the top of the viewport). 2 / 1050 was the largest
+   pairing that stayed clear of that cliff in testing. */
+const INFO_BOOST = 2;
+const PORTRAIT_INFO_BUDGET = 1050;
+
 /* Portrait title-screen canvas — genuinely portrait-shaped (unlike the
    1024×600 landscape one) so the starfield background, battle scene and
    buttons all fill a tall phone screen instead of sitting in a small
@@ -91,7 +113,12 @@ export class Renderer {
       const scale      = Math.min(SIDEBAR_SCALE_CAP, Math.max(SIDEBAR_MIN_SCALE, safeScale));
 
       w = mapW;
-      h = mapH + Math.round(CANVAS_H * scale);
+      /* the local height budget is bigger than the landscape design's 600
+         (PORTRAIT_INFO_BUDGET) to fit the boosted info content below the
+         buttons without clipping it or squeezing the log to its minimum —
+         `scale` above is intentionally still computed from the plain 600
+         reference so it keeps sizing the buttons the same either way */
+      h = mapH + Math.round(PORTRAIT_INFO_BUDGET * scale);
       /* panel spans the full map width below it; _sidebar() renders its
          content in a local, unscaled coordinate space and stretches it to
          fill this rect, so it's always "as wide as the playfield" */
@@ -786,8 +813,7 @@ export class Renderer {
 
   /* ═══════════ SIDEBAR ═══════════ */
   _sidebar(g) {
-    const c = this.cx, { x: sx, y: sy, w: sw, scale } = this._sideRect;
-    const sh = CANVAS_H * scale;
+    const c = this.cx, { x: sx, y: sy, w: sw, h: sh, scale } = this._sideRect;
     c.fillStyle = C.SIDE_BG; c.fillRect(sx, sy, sw, sh);
     c.strokeStyle = C.SIDE_BD; c.lineWidth = 2; c.strokeRect(sx, sy, sw, sh);
 
@@ -798,6 +824,12 @@ export class Renderer {
        (see _applyLayout) and fonts/spacing/buttons all grow together with
        it, filling the space without any per-element rework or distortion. */
     const lw = sw / scale; // local width — always resolves back to `sw` once scaled
+    const localBudget = sh / scale; // local height budget (bigger in portrait — see _applyLayout)
+    /* the info content (unit stats, terrain, forecasts, play log) gets a
+       further boost on top of `scale` above — reported unreadable even
+       after that, unlike the buttons, which stay at `scale` alone */
+    const infoBoost = scale > 1 ? INFO_BOOST : 1;
+
     c.save();
     c.translate(sx, sy);
     c.scale(scale, scale);
@@ -835,10 +867,11 @@ export class Renderer {
     /* divider */
     c.fillStyle = C.SIDE_BD; c.fillRect(px-5, y, lw-10, 1); y += 10;
 
-    /* ── primary controls, right under the header ── whatever needs
-       tapping next (end the turn, confirm/cancel a rewind, regenerate the
-       map) sits in the same immediately-visible spot every time, instead
-       of requiring a look at the bottom of a possibly very tall pane */
+    /* primary controls, right under the header — whatever needs tapping
+       next (end the turn, confirm/cancel a rewind, regenerate the map)
+       sits in the same immediately-visible spot every time, instead of
+       requiring a look at the bottom of a possibly very tall pane. Stays
+       at the ambient `scale` only — not part of the info-boost below. */
     this._sidebarTopY = y;
     if (g._historyView) {
       this._historyControls(g, 0, y, lw); y += 46 + 10;
@@ -851,24 +884,24 @@ export class Renderer {
 
     /* unit info */
     const u = g.sel || this._unitAt(g, g.cur);
-    if (u) y = this._unitPanel(u, px, y, lw - 20);
+    if (u) y = this._unitPanel(u, px, y, lw - 20, infoBoost);
 
     /* terrain — suppressed while a combat/heal/steal forecast is active so the
        forecast always fits between the unit panel and the log without clipping */
-    if (g.cur && !g.preview) y = this._terrainPanel(g, px, y, lw - 20);
+    if (g.cur && !g.preview) y = this._terrainPanel(g, px, y, lw - 20, infoBoost);
 
     /* combat / heal / steal preview */
     if (g.preview) {
-      if (g.preview.heal)       { this._healPreview(g.preview, 0, y, lw);  y += 70; }
-      else if (g.preview.steal) { this._stealPreview(g.preview, 0, y, lw); y += 70; }
-      else                      { this._combatPreview(g.preview, 0, y, lw); y += 120; }
-      y += 8;
+      if (g.preview.heal)       { this._healPreview(g.preview, 0, y, lw, infoBoost);  y += 70 * infoBoost; }
+      else if (g.preview.steal) { this._stealPreview(g.preview, 0, y, lw, infoBoost); y += 70 * infoBoost; }
+      else                      { this._combatPreview(g.preview, 0, y, lw, infoBoost); y += 120 * infoBoost; }
+      y += 8 * infoBoost;
     }
 
     /* play log — fills whatever room is left down to the bottom of the
        pane, so the space freed up above goes toward more visible history
        rather than sitting blank */
-    this._playLog(g, 0, y, lw, CANVAS_H - 10 - y);
+    this._playLog(g, 0, y, lw, localBudget - 10 - y, infoBoost);
 
     c.restore();
 
@@ -877,6 +910,7 @@ export class Renderer {
        that the transform is gone (game.js hit-tests in absolute space) */
     this._toAbsBounds(sx, sy, scale);
   }
+
 
   /* Converts sidebar hit-area bounds recorded in local (unscaled) space —
      while drawing inside the translate+scale block above — into absolute
@@ -904,109 +938,117 @@ export class Renderer {
     return [...g.players, ...g.enemies].find(u => u.alive && u.x === cur.x && u.y === cur.y) || null;
   }
 
-  _unitPanel(u, x, y, w) {
+  _unitPanel(u, x, y, w, boost = 1) {
     const c = this.cx;
     const invCount = u.inventory ? u.inventory.length : 0;
-    const panelH = 180 + (invCount > 0 ? 14 + invCount * 12 : 0);
+    /* stats grid — as many columns as the width comfortably fits (down to
+       1 for very narrow/heavily-boosted layouts), column width and the
+       label-value gap both derived from the actual width so it can never
+       overflow regardless of how narrow or wide `w` ends up */
+    const cols = w >= 340 ? 4 : w >= 170 ? 2 : 1;
+    const colW = Math.floor(w / cols);
+    const valOffset = Math.floor(colW * 0.55);
+    const stats = [['STR',u.str],['MAG',u.mag],['SKL',u.skl],['SPD',u.spd],['LCK',u.lck],['DEF',u.def],['RES',u.res],['MOV',u.mov]];
+    const gridRows = Math.ceil(stats.length / cols);
+    const rowH = 16 * boost;
+    const gridH = gridRows * rowH + 8 * boost;
+    const panelH = 54*boost + gridH + 54*boost + (invCount > 0 ? (14 + invCount * 12) * boost : 0);
+
     c.fillStyle = u.isPlayer ? '#1a1a50' : '#501a1a';
     c.fillRect(x-4, y, w+8, panelH);
     c.strokeStyle = u.isPlayer ? '#3030a0' : '#a03030';
     c.lineWidth = 1; c.strokeRect(x-4, y, w+8, panelH);
 
-    y += 12;
-    c.fillStyle = C.GOLD; c.font = `8px ${FONT}`; c.textAlign = 'left';
-    c.fillText(u.name, x, y); y += 13;
-    c.fillStyle = '#8080b0'; c.font = `6px ${FONT}`;
-    c.fillText(`${u.className}  Lv.${u.level}  ${u.weapon.name}`, x, y); y += 13;
+    y += 12*boost;
+    c.fillStyle = C.GOLD; c.font = `${8*boost}px ${FONT}`; c.textAlign = 'left';
+    c.fillText(u.name, x, y); y += 13*boost;
+    c.fillStyle = '#8080b0'; c.font = `${6*boost}px ${FONT}`;
+    c.fillText(`${u.className}  Lv.${u.level}  ${u.weapon.name}`, x, y); y += 13*boost;
 
     /* HP bar */
     const pct = u.hp / u.maxHp;
-    c.fillStyle = C.HP_BG; c.fillRect(x, y, w, 8);
+    const barH = 8 * boost;
+    c.fillStyle = C.HP_BG; c.fillRect(x, y, w, barH);
     c.fillStyle = pct > 0.5 ? C.HP_OK : pct > 0.25 ? C.HP_MID : C.HP_LOW;
-    c.fillRect(x, y, Math.floor(w * pct), 8);
-    c.fillStyle = '#fff'; c.font = '6px monospace';
-    c.fillText(`${u.hp}/${u.maxHp}`, x+2, y+7); y += 16;
+    c.fillRect(x, y, Math.floor(w * pct), barH);
+    c.fillStyle = '#fff'; c.font = `${6*boost}px monospace`;
+    c.fillText(`${u.hp}/${u.maxHp}`, x+2, y+barH-1); y += 16*boost;
 
-    /* stats grid — spreads to 4 columns when the panel has the width for it
-       (portrait's wide, centered content column) instead of always 2 */
-    const stats = [['STR',u.str],['MAG',u.mag],['SKL',u.skl],['SPD',u.spd],['LCK',u.lck],['DEF',u.def],['RES',u.res],['MOV',u.mov]];
-    const cols = w >= 340 ? 4 : 2;
-    const colW = cols === 4 ? Math.floor(w / cols) : 96;
-    c.font = `7px ${FONT}`;
+    /* stats grid */
+    c.font = `${7*boost}px ${FONT}`;
     for (let i = 0; i < stats.length; i++) {
       const col = i % cols, row = (i / cols) | 0;
-      const sx = x + col * colW, sy = y + row * 16;
+      const sx = x + col * colW, sy = y + row * rowH;
       c.fillStyle = '#6060a0'; c.fillText(stats[i][0], sx, sy);
-      c.fillStyle = C.TXT;     c.fillText(String(stats[i][1]).padStart(2), sx + 38, sy);
+      c.fillStyle = C.TXT;     c.fillText(String(stats[i][1]).padStart(2), sx + valOffset, sy);
     }
-    y += 72;
+    y += gridH;
 
     /* inventory */
     if (invCount > 0) {
-      c.fillStyle = '#6060a0'; c.font = `6px ${FONT}`;
-      c.fillText('ITEMS', x, y); y += 10;
-      c.font = `6px ${FONT}`;
+      c.fillStyle = '#6060a0'; c.font = `${6*boost}px ${FONT}`;
+      c.fillText('ITEMS', x, y); y += 10*boost;
+      c.font = `${6*boost}px ${FONT}`;
       for (const item of u.inventory) {
         c.fillStyle = item.type === 'weapon' ? '#80b0ff' : '#80ff80';
-        c.fillText('\u2022 ' + item.name, x + 4, y);
-        y += 12;
+        c.fillText('• ' + item.name, x + 4, y);
+        y += 12*boost;
       }
     }
 
-    return y + 4;
+    return y + 4*boost;
   }
 
-  _terrainPanel(g, x, y, w) {
+  _terrainPanel(g, x, y, w, boost = 1) {
     const c = this.cx, t = g.map.at(g.cur.x, g.cur.y);
-    y += 6;
-    c.fillStyle = '#101020'; c.fillRect(x-4, y, w+8, 54);
-    c.strokeStyle = '#303050'; c.lineWidth = 1; c.strokeRect(x-4, y, w+8, 54);
-    y += 12;
-    c.fillStyle = C.GOLD; c.font = `8px ${FONT}`; c.textAlign = 'left';
-    c.fillText(t.name, x, y); y += 14;
-    c.fillStyle = C.TXT; c.font = `7px ${FONT}`;
-    c.fillText(`DEF +${t.def}  AVO +${t.avo}`, x, y); y += 12;
-    c.fillText(`Move: ${t.cost >= 99 ? '--' : t.cost}`, x, y); y += 22;
+    y += 6*boost;
+    const panelH = 54 * boost;
+    c.fillStyle = '#101020'; c.fillRect(x-4, y, w+8, panelH);
+    c.strokeStyle = '#303050'; c.lineWidth = 1; c.strokeRect(x-4, y, w+8, panelH);
+    y += 12*boost;
+    c.fillStyle = C.GOLD; c.font = `${8*boost}px ${FONT}`; c.textAlign = 'left';
+    c.fillText(t.name, x, y); y += 14*boost;
+    c.fillStyle = C.TXT; c.font = `${7*boost}px ${FONT}`;
+    c.fillText(`DEF +${t.def}  AVO +${t.avo}`, x, y); y += 12*boost;
+    c.fillText(`Move: ${t.cost >= 99 ? '--' : t.cost}`, x, y); y += 22*boost;
     return y;
   }
 
-  _combatPreview(pv, sx, y, sw) {
+  _combatPreview(pv, sx, y, sw, boost = 1) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    c.fillStyle = '#0d0d20'; c.fillRect(x-4, y, w+8, 120);
-    c.strokeStyle = '#8020c0'; c.lineWidth = 2; c.strokeRect(x-4, y, w+8, 120);
+    const panelH = 120 * boost;
+    c.fillStyle = '#0d0d20'; c.fillRect(x-4, y, w+8, panelH);
+    c.strokeStyle = '#8020c0'; c.lineWidth = 2; c.strokeRect(x-4, y, w+8, panelH);
 
-    c.fillStyle = '#c080ff'; c.font = `8px ${FONT}`; c.textAlign = 'center';
-    c.fillText('COMBAT FORECAST', sx + sw/2, y + 12);
+    c.fillStyle = '#c080ff'; c.font = `${8*boost}px ${FONT}`; c.textAlign = 'center';
+    c.fillText('COMBAT FORECAST', sx + sw/2, y + 12*boost);
 
-    c.textAlign = 'left'; c.font = `7px ${FONT}`;
+    c.textAlign = 'left'; c.font = `${7*boost}px ${FONT}`;
     /* attacker */
-    c.fillStyle = '#8080ff'; c.fillText(pv.atk.name, x, y + 28);
+    c.fillStyle = '#8080ff'; c.fillText(pv.atk.name, x, y + 28*boost);
     c.fillStyle = C.TXT;
-    c.fillText(`DMG ${pv.af.dmg}  HIT ${pv.af.hit}%`, x, y + 42);
-    c.fillText(`CRT ${pv.af.crit}%${pv.af.doubles ? '  x2' : ''}`, x, y + 54);
+    c.fillText(`DMG ${pv.af.dmg}  HIT ${pv.af.hit}%`, x, y + 42*boost);
+    c.fillText(`CRT ${pv.af.crit}%${pv.af.doubles ? '  x2' : ''}`, x, y + 54*boost);
 
-    c.fillStyle = '#404060'; c.fillRect(x, y + 60, w, 1);
+    c.fillStyle = '#404060'; c.fillRect(x, y + 60*boost, w, 1);
     /* defender */
-    c.fillStyle = '#ff8080'; c.fillText(pv.def.name, x, y + 74);
+    c.fillStyle = '#ff8080'; c.fillText(pv.def.name, x, y + 74*boost);
     if (pv.df) {
       c.fillStyle = C.TXT;
-      c.fillText(`DMG ${pv.df.dmg}  HIT ${pv.df.hit}%`, x, y + 88);
-      c.fillText(`CRT ${pv.df.crit}%${pv.df.doubles ? '  x2' : ''}`, x, y + 100);
+      c.fillText(`DMG ${pv.df.dmg}  HIT ${pv.df.hit}%`, x, y + 88*boost);
+      c.fillText(`CRT ${pv.df.crit}%${pv.df.doubles ? '  x2' : ''}`, x, y + 100*boost);
     } else {
-      c.fillStyle = '#666'; c.fillText('Cannot counter', x, y + 88);
+      c.fillStyle = '#666'; c.fillText('Cannot counter', x, y + 88*boost);
     }
   }
 
   _menu(g) {
     const c = this.cx;
-    /* portrait gets a much bigger menu on top of the ambient sidebar scale
-       it already inherits below — the action menu is the thing tapped
-       most often mid-battle, so it gets the biggest readability boost */
-    const boost    = this._sideRect.scale > 1;
-    const itemH    = boost ? 108 : 40;
-    const pad      = boost ? 26  : 12;
-    const headerFont = boost ? 30 : 8;
-    const itemFont   = boost ? 38 : 10;
+    /* the action menu already inherits the ambient sidebar scale below
+       (2-2.6x in portrait) same as the other buttons — that was confirmed
+       a good size, so it isn't boosted any further here */
+    const itemH = 40, pad = 12;
+    const headerFont = 8, itemFont = 10;
     const { x: sx, y: sy, w: sw, scale } = this._sideRect;
     const lw = sw / scale;
     const mw = lw - 20, mh = g.menuOpts.length * itemH + pad * 2;
@@ -1027,10 +1069,10 @@ export class Renderer {
 
     /* header */
     c.fillStyle = '#8080cc'; c.font = `${headerFont}px ${FONT}`; c.textAlign = 'center';
-    c.fillText('ACTION', lw / 2, my + (boost ? 34 : 12));
+    c.fillText('ACTION', lw / 2, my + 12);
 
     g.menuOpts.forEach((opt, i) => {
-      const oy = my + pad + (boost ? 20 : 8) + i * itemH;
+      const oy = my + pad + 8 + i * itemH;
       /* highlight */
       c.fillStyle = opt.on ? '#202060' : '#101020';
       c.fillRect(mx + 2, oy - 6, mw - 4, itemH - 6);
@@ -1040,7 +1082,7 @@ export class Renderer {
       }
       c.fillStyle = opt.on ? '#ffffff' : '#404050';
       c.font = `${itemFont}px ${FONT}`; c.textAlign = 'center';
-      c.fillText(opt.label, lw / 2, oy + (boost ? 40 : 14));
+      c.fillText(opt.label, lw / 2, oy + 14);
     });
 
     c.restore();
@@ -1049,19 +1091,20 @@ export class Renderer {
     g._menuBounds = { x: sx + (mx-2)*scale, y: sy + my*scale, w: (mw+4)*scale, h: mh*scale };
     /* local (unscaled) row geometry — game.js needs this to figure out
        which option a click landed on, since it only sees absolute pixels */
-    this._menuGeom = { rowOffset: pad + (boost ? 20 : 8), itemH };
+    this._menuGeom = { rowOffset: pad + 8, itemH };
   }
 
   /* ═══════════ PLAY LOG ═══════════ */
 
-  _playLog(g, sx, y, sw, maxH) {
+  _playLog(g, sx, y, sw, maxH, boost = 1) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    const LINE_H = 14;
+    const LINE_H = 14 * boost;
+    const headH = 14 * boost, padH = 11 * boost;
     /* fill however much room is actually left above the bottom of the pane
        instead of a fixed 7 lines — the space freed up by moving the
        buttons to the top (see _sidebar) goes toward showing more history */
-    const LOG_LINES = maxH ? Math.max(5, Math.min(24, Math.floor((maxH - 14 - 11) / LINE_H))) : 7;
-    const panelH = 14 + LOG_LINES * LINE_H + 11;
+    const LOG_LINES = maxH ? Math.max(5, Math.min(24, Math.floor((maxH - headH - padH) / LINE_H))) : 7;
+    const panelH = headH + LOG_LINES * LINE_H + padH;
     const selectedEntry = g._historyView ? g._historyView.entry : null;
     const hasRewind = g.rewindsLeft > 0 && g.snapshots && g.snapshots.length > 0;
     const allEntries = g.playLog || [];
@@ -1079,65 +1122,66 @@ export class Renderer {
     /* record panel bounds for wheel-scroll hit testing */
     this._logPanelBounds = { x: x - 4, y, w: w + 8, h: panelH };
 
-    /* ── header row ── */
-    c.fillStyle = '#4040a0'; c.font = `6px ${FONT}`; c.textAlign = 'left';
-    c.fillText('PLAY LOG', x, y + 10);
+    /* header row */
+    c.fillStyle = '#4040a0'; c.font = `${6*boost}px ${FONT}`; c.textAlign = 'left';
+    c.fillText('PLAY LOG', x, y + 10*boost);
 
-    /* ↺ N charge counter — far right of header */
-    const rbw = 44, rbh = 13, rbx = sx + sw - rbw - 6, rby = y + 1;
+    /* rewind charge counter — far right of header */
+    const rbw = 44*boost, rbh = 13*boost, rbx = sx + sw - rbw - 6*boost, rby = y + 1*boost;
     c.fillStyle = hasRewind ? '#0e1e2e' : '#0a0a0a';
     c.fillRect(rbx, rby, rbw, rbh);
     c.strokeStyle = hasRewind ? '#30b0e0' : '#252530';
     c.lineWidth = 1; c.strokeRect(rbx, rby, rbw, rbh);
     c.fillStyle = hasRewind ? '#40d0f0' : '#303040';
-    c.font = `6px ${FONT}`; c.textAlign = 'center';
-    c.fillText(`\u21BA ${g.rewindsLeft}`, rbx + rbw / 2, rby + 9);
+    c.font = `${6*boost}px ${FONT}`; c.textAlign = 'center';
+    c.fillText(`↺ ${g.rewindsLeft}`, rbx + rbw / 2, rby + 9*boost);
     c.textAlign = 'left';
     this._rewindBtnBounds = { x: rbx, y: rby, w: rbw, h: rbh };
 
-    /* ▲ / ▼ scroll arrow buttons — just left of the ↺ counter */
-    const arH = 13, arW = 13, arGap = 2;
-    const arDnX = rbx - arW - 4;
+    /* scroll arrow buttons — just left of the rewind counter */
+    const arH = 13*boost, arW = 13*boost, arGap = 2*boost;
+    const arDnX = rbx - arW - 4*boost;
     const arUpX = arDnX - arW - arGap;
     const arY   = rby;
 
-    /* ▲ up button */
+    /* up button */
     c.fillStyle = canScrollUp ? '#0e2030' : '#0a0a0a';
     c.fillRect(arUpX, arY, arW, arH);
     c.strokeStyle = canScrollUp ? '#2080a0' : '#202030';
     c.lineWidth = 1; c.strokeRect(arUpX, arY, arW, arH);
     c.fillStyle = canScrollUp ? '#60c0e0' : '#303040';
-    c.font = `8px ${FONT}`; c.textAlign = 'center';
-    c.fillText('\u25B2', arUpX + arW / 2, arY + 10);
+    c.font = `${8*boost}px ${FONT}`; c.textAlign = 'center';
+    c.fillText('▲', arUpX + arW / 2, arY + 10*boost);
     this._logScrollUp = { x: arUpX, y: arY, w: arW, h: arH };
 
-    /* ▼ down button */
+    /* down button */
     c.fillStyle = canScrollDown ? '#0e2030' : '#0a0a0a';
     c.fillRect(arDnX, arY, arW, arH);
     c.strokeStyle = canScrollDown ? '#2080a0' : '#202030';
     c.lineWidth = 1; c.strokeRect(arDnX, arY, arW, arH);
     c.fillStyle = canScrollDown ? '#60c0e0' : '#303040';
-    c.font = `8px ${FONT}`; c.textAlign = 'center';
-    c.fillText('\u25BC', arDnX + arW / 2, arY + 10);
+    c.font = `${8*boost}px ${FONT}`; c.textAlign = 'center';
+    c.fillText('▼', arDnX + arW / 2, arY + 10*boost);
     this._logScrollDown = { x: arDnX, y: arY, w: arW, h: arH };
 
-    /* ── entries ── */
+    /* entries */
     this._logEntryBounds = [];
     const entries = allEntries.slice(startIdx, endIdx);
     /* clip rendering to log panel content area */
     c.save();
-    c.beginPath(); c.rect(x - 4, y + 14, w + 8, panelH - 14); c.clip();
+    c.beginPath(); c.rect(x - 4, y + headH, w + 8, panelH - headH); c.clip();
 
     /* "older above" gradient hint */
     if (canScrollUp) {
-      const grd = c.createLinearGradient(0, y + 14, 0, y + 26);
+      const grd = c.createLinearGradient(0, y + headH, 0, y + headH + 12*boost);
       grd.addColorStop(0, 'rgba(40,50,100,0.5)');
       grd.addColorStop(1, 'rgba(40,50,100,0)');
       c.fillStyle = grd;
-      c.fillRect(x - 4, y + 14, w + 8, 12);
+      c.fillRect(x - 4, y + headH, w + 8, 12*boost);
     }
 
-    let ey = y + 25;
+    const entryFont = 9 * boost;
+    let ey = y + headH + 11*boost;
     for (const entry of entries) {
       const ebx = x - 4, ebw = w + 8, ebh = LINE_H;
       const isSelected = entry === selectedEntry;
@@ -1146,42 +1190,42 @@ export class Renderer {
       /* highlight selected entry; every entry is navigable so all get a subtle row tint */
       if (isSelected) {
         c.fillStyle = 'rgba(60,80,200,0.38)';
-        c.fillRect(ebx, ey - 10, ebw, ebh);
+        c.fillRect(ebx, ey - 10*boost, ebw, ebh);
         c.strokeStyle = 'rgba(100,140,255,0.65)';
-        c.lineWidth = 1; c.strokeRect(ebx, ey - 10, ebw, ebh);
+        c.lineWidth = 1; c.strokeRect(ebx, ey - 10*boost, ebw, ebh);
       } else {
         c.fillStyle = 'rgba(30,30,80,0.14)';
-        c.fillRect(ebx, ey - 10, ebw, ebh);
+        c.fillRect(ebx, ey - 10*boost, ebw, ebh);
       }
 
       /* entry text — proportional sans-serif for clarity */
       let txt = entry.text;
-      const maxChars = Math.floor((w - 16) / 5.2); // ~5.2px per char at 9px Arial
-      if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '\u2026';
+      const maxChars = Math.floor((w - 16*boost) / (5.2 * boost)); // ~5.2px per char at 9px Arial
+      if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '…';
       c.fillStyle = isSelected ? '#c0d0ff' : entry.color;
-      c.font = '9px Arial, sans-serif';
+      c.font = `${entryFont}px Arial, sans-serif`;
       c.textAlign = 'left';
       c.fillText(txt, x + 1, ey);
 
-      /* selected entry gets a small ↺ marker to remind the player this is the restore point */
+      /* selected entry gets a small marker to remind the player this is the restore point */
       if (isSelected) {
         c.fillStyle = '#6080c0';
-        c.font = `6px ${FONT}`;
+        c.font = `${6*boost}px ${FONT}`;
         c.textAlign = 'right';
-        c.fillText('\u21BA', sx + sw - 10, ey);
+        c.fillText('↺', sx + sw - 10*boost, ey);
       }
 
-      this._logEntryBounds.push({ x: ebx, y: ey - 10, w: ebw, h: ebh, entry });
+      this._logEntryBounds.push({ x: ebx, y: ey - 10*boost, w: ebw, h: ebh, entry });
       ey += LINE_H;
     }
 
     /* "newer below" gradient hint */
     if (canScrollDown) {
-      const grd = c.createLinearGradient(0, y + panelH - 14, 0, y + panelH - 2);
+      const grd = c.createLinearGradient(0, y + panelH - 14*boost, 0, y + panelH - 2*boost);
       grd.addColorStop(0, 'rgba(40,50,100,0)');
       grd.addColorStop(1, 'rgba(40,50,100,0.5)');
       c.fillStyle = grd;
-      c.fillRect(x - 4, y + panelH - 14, w + 8, 12);
+      c.fillRect(x - 4, y + panelH - 14*boost, w + 8, 12*boost);
     }
 
     c.restore();
@@ -1624,40 +1668,43 @@ export class Renderer {
   }
 
   /* ═══════════ HEAL PREVIEW ═══════════ */
-  _healPreview(pv, sx, y, sw) {
+  _healPreview(pv, sx, y, sw, boost = 1) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    c.fillStyle = '#0d200d'; c.fillRect(x - 4, y, w + 8, 70);
-    c.strokeStyle = '#20c040'; c.lineWidth = 2; c.strokeRect(x - 4, y, w + 8, 70);
+    const panelH = 70 * boost;
+    c.fillStyle = '#0d200d'; c.fillRect(x - 4, y, w + 8, panelH);
+    c.strokeStyle = '#20c040'; c.lineWidth = 2; c.strokeRect(x - 4, y, w + 8, panelH);
 
-    c.fillStyle = '#60ff80'; c.font = `8px ${FONT}`; c.textAlign = 'center';
-    c.fillText('HEAL PREVIEW', sx + sw / 2, y + 14);
+    c.fillStyle = '#60ff80'; c.font = `${8*boost}px ${FONT}`; c.textAlign = 'center';
+    c.fillText('HEAL PREVIEW', sx + sw / 2, y + 14*boost);
 
-    c.textAlign = 'left'; c.font = `7px ${FONT}`;
+    c.textAlign = 'left'; c.font = `${7*boost}px ${FONT}`;
     c.fillStyle = '#80ff80';
-    c.fillText(pv.target.name, x, y + 32);
+    c.fillText(pv.target.name, x, y + 32*boost);
     c.fillStyle = C.TXT;
-    c.fillText(`HP ${pv.target.hp}/${pv.target.maxHp}  \u2192  ${Math.min(pv.target.maxHp, pv.target.hp + pv.amount)}`, x, y + 48);
+    c.fillText(`HP ${pv.target.hp}/${pv.target.maxHp}  →  ${Math.min(pv.target.maxHp, pv.target.hp + pv.amount)}`, x, y + 48*boost);
     c.fillStyle = '#60ff80';
-    c.fillText(`+${pv.amount} HP`, x, y + 62);
+    c.fillText(`+${pv.amount} HP`, x, y + 62*boost);
   }
 
-  /* ═══════════ STEAL PREVIEW ═══════════ */
-  _stealPreview(pv, sx, y, sw) {
+  /* STEAL PREVIEW */
+  _stealPreview(pv, sx, y, sw, boost = 1) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    c.fillStyle = '#1a1a0d'; c.fillRect(x - 4, y, w + 8, 70);
-    c.strokeStyle = '#c0a020'; c.lineWidth = 2; c.strokeRect(x - 4, y, w + 8, 70);
+    const panelH = 70 * boost;
+    c.fillStyle = '#1a1a0d'; c.fillRect(x - 4, y, w + 8, panelH);
+    c.strokeStyle = '#c0a020'; c.lineWidth = 2; c.strokeRect(x - 4, y, w + 8, panelH);
 
-    c.fillStyle = '#ffd740'; c.font = `8px ${FONT}`; c.textAlign = 'center';
-    c.fillText('STEAL PREVIEW', sx + sw / 2, y + 14);
+    c.fillStyle = '#ffd740'; c.font = `${8*boost}px ${FONT}`; c.textAlign = 'center';
+    c.fillText('STEAL PREVIEW', sx + sw / 2, y + 14*boost);
 
-    c.textAlign = 'left'; c.font = `7px ${FONT}`;
+    c.textAlign = 'left'; c.font = `${7*boost}px ${FONT}`;
     c.fillStyle = '#ff8080';
-    c.fillText(pv.target.name, x, y + 32);
+    c.fillText(pv.target.name, x, y + 32*boost);
     c.fillStyle = C.TXT;
-    c.fillText(`Item: ${pv.item.name}`, x, y + 48);
+    c.fillText(`Item: ${pv.item.name}`, x, y + 48*boost);
     c.fillStyle = '#ffd740';
-    c.fillText(`${pv.chance}% chance`, x, y + 62);
+    c.fillText(`${pv.chance}% chance`, x, y + 62*boost);
   }
+
 
   /* ═══════════ DRAFT SCREEN ═══════════ */
   _draftScreen(g) {
