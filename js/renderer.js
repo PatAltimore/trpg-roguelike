@@ -720,8 +720,17 @@ export class Renderer {
   }
 
   _unit(u, g) {
-    const c = this.cx, x = u.x*TILE, y = u.y*TILE, T = TILE;
+    const c = this.cx, x0 = u.x*TILE, y0 = u.y*TILE, T = TILE;
     const dim = u.isPlayer && u.done;
+    /* The sprite below (body/head/helmet/eyes/border) is drawn at fixed
+       pixel offsets designed for the original 40px tile — centered
+       horizontally on it, and deliberately sitting slightly above center
+       vertically to leave the HP bar/label room underneath. Recenter that
+       same fixed-size sprite within whatever TILE actually is now (bigger
+       tiles = more margin around it) instead of redrawing it at a new
+       size, so it stays anchored to the tile's true center either way. */
+    const off = (T - 40) / 2;
+    const x = x0 + off, y = y0 + off;
 
     /* body */
     c.fillStyle = dim ? this._dim(u.hue) : u.hue;
@@ -756,10 +765,11 @@ export class Renderer {
       const pulse = 0.3 + Math.sin(this.t * 0.3) * 0.25;
       c.fillStyle = `rgba(255,60,60,${pulse})`;
       c.fillRect(x+6, y+2, 28, 30);
-      /* red crosshair on target */
+      /* red crosshair on target — centered on the whole tile, not the
+         (recentred, possibly offset) sprite sub-box above */
       c.strokeStyle = `rgba(255,100,100,${0.6 + Math.sin(this.t * 0.2) * 0.4})`;
       c.lineWidth = 2;
-      const cx2 = x + T/2, cy2 = y + T/2, s = 14 + Math.sin(this.t * 0.15) * 2;
+      const cx2 = x0 + T/2, cy2 = y0 + T/2, s = 14 + Math.sin(this.t * 0.15) * 2;
       c.beginPath();
       c.moveTo(cx2 - s, cy2); c.lineTo(cx2 - s + 6, cy2);
       c.moveTo(cx2 + s, cy2); c.lineTo(cx2 + s - 6, cy2);
@@ -773,8 +783,8 @@ export class Renderer {
       const pulse = 0.6 + Math.sin(this.t * 0.2) * 0.4;
       c.strokeStyle = `rgba(255,255,0,${pulse})`;
       c.lineWidth = 3;
-      /* crosshair corners */
-      const cx = x + T/2, cy = y + T/2, s = 16 + Math.sin(this.t * 0.15) * 2;
+      /* crosshair corners — centered on the whole tile */
+      const cx = x0 + T/2, cy = y0 + T/2, s = 16 + Math.sin(this.t * 0.15) * 2;
       c.beginPath();
       c.moveTo(cx - s, cy - s); c.lineTo(cx - s + 8, cy - s);
       c.moveTo(cx - s, cy - s); c.lineTo(cx - s, cy - s + 8);
@@ -787,19 +797,26 @@ export class Renderer {
       c.stroke();
     }
 
-    /* HP bar */
-    const pct = u.hp / u.maxHp, bw = T - 6, by = y + T - 8;
-    c.fillStyle = C.HP_BG; c.fillRect(x+3, by, bw, 5);
+    /* HP bar — spans the full tile width, not the sprite sub-box */
+    const pct = u.hp / u.maxHp, bw = T - 6, by = y0 + T - 8;
+    c.fillStyle = C.HP_BG; c.fillRect(x0+3, by, bw, 5);
     c.fillStyle = pct > 0.5 ? C.HP_OK : pct > 0.25 ? C.HP_MID : C.HP_LOW;
-    c.fillRect(x+3, by, Math.floor(bw * pct), 5);
+    c.fillRect(x0+3, by, Math.floor(bw * pct), 5);
 
-    /* label — outlined so the letter reads clearly against whatever body/
-       terrain color happens to be behind it, not just relying on size */
-    c.font = 'bold 12px monospace'; c.textAlign = 'center';
+    /* label — on the chest, but low enough (y+26, not the chest's own
+       y+14..y+30 center of y+22) to clear the head (y+4..y+18) — a
+       centered 12px glyph reaches ~6px above its anchor, so anchoring at
+       the chest's true center let it graze the chin. Outlined so the
+       letter reads clearly against whatever body color is behind it.
+       textBaseline is reset after — nothing else in this file sets it, so
+       everything drawn later (sidebar, etc.) assumes the 'alphabetic'
+       default. */
+    c.font = 'bold 12px monospace'; c.textAlign = 'center'; c.textBaseline = 'middle';
     c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,0.85)';
-    c.strokeText(u.lbl, x + T/2, y + T - 9);
+    c.strokeText(u.lbl, x + 20, y + 26);
     c.fillStyle = '#fff';
-    c.fillText(u.lbl, x + T/2, y + T - 9);
+    c.fillText(u.lbl, x + 20, y + 26);
+    c.textBaseline = 'alphabetic';
   }
 
   _helm(k) {
