@@ -1,6 +1,10 @@
-export const TILE = 40;
-export const COLS = 20;
-export const ROWS = 15;
+/* Bigger, fewer tiles — a casual, chunkier grid. TILE*COLS and TILE*ROWS
+   are kept equal to the old 800×600 map area (20×40 and 15×40) so the
+   canvas/layout math elsewhere (which derives everything from those
+   products, not from COLS/ROWS/TILE individually) doesn't need to change. */
+export const TILE = 50;
+export const COLS = 16;
+export const ROWS = 12;
 export const SIDEBAR_W = 224;
 export const CANVAS_W = COLS * TILE + SIDEBAR_W;
 export const CANVAS_H = ROWS * TILE;

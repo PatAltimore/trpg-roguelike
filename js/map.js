@@ -43,37 +43,34 @@ export class GameMap {
        Room C → forts & ranged threats (risk/reward positioning)     */
   _generateTutorial() {
     const MAP = [
-      'WWWWWWWWWWWWWWWWWWWW',
-      'W......WW...FF.....W',
-      'W......RR....F.....W',
-      'W......RR..........W',
-      'W......WW...F......W',
-      'WWWWWWWWWW.........W',
-      'WWWWWWWWWWWWWWRRWWWW',
-      'WWWWWWWWWWWWWWRRWWWW',
-      'WWWWWWWWWWW.......WW',
-      'WWWWWWWWWWW..T....WW',
-      'WWWWWWWWWWW.......WW',
-      'WWWWWWWWWWW.......WW',
-      'WWWWWWWWWWWWWWWWWWWW',
-      'WWWWWWWWWWWWWWWWWWWW',
-      'WWWWWWWWWWWWWWWWWWWW',
+      'WWWWWWWWWWWWWWWW',
+      'W.....WW..FF...W',
+      'W.....RR...F...W',
+      'W.....WW.......W',
+      'WWWWWWW........W',
+      'WWWWWWWWWWRRWWWW',
+      'WWWWWWWWWWRRWWWW',
+      'WWWWWWWWW......W',
+      'WWWWWWWWW..T...W',
+      'WWWWWWWWW......W',
+      'WWWWWWWWWWWWWWWW',
+      'WWWWWWWWWWWWWWWW',
     ];
     const CH = { W: T_WALL, '.': T_PLAIN, R: T_ROAD, F: T_FOREST, T: T_FORT };
     this.tiles = MAP.map(row => [...row].map(ch => CH[ch] || T_WALL));
     this.rooms = [
-      { x: 1, y: 1, w: 6, h: 4 },
-      { x: 10, y: 1, w: 8, h: 5 },
-      { x: 11, y: 8, w: 7, h: 4 },
+      { x: 1, y: 1, w: 5, h: 3 },
+      { x: 8, y: 1, w: 7, h: 4 },
+      { x: 9, y: 7, w: 6, h: 3 },
     ];
     this.playerSpawns = [
+      { x: 2, y: 1 }, { x: 3, y: 1 }, { x: 4, y: 1 },
       { x: 2, y: 2 }, { x: 3, y: 2 }, { x: 4, y: 2 },
-      { x: 2, y: 3 }, { x: 3, y: 3 }, { x: 4, y: 3 },
     ];
     this.enemySpawns = [
-      { x: 16, y: 3, cls: 'BRIGAND' },
-      { x: 13, y: 2, cls: 'SOLDIER' },
-      { x: 15, y: 10, cls: 'E_ARCHER' },
+      { x: 13, y: 1, cls: 'BRIGAND' },
+      { x: 9,  y: 2, cls: 'SOLDIER' },
+      { x: 12, y: 9, cls: 'E_ARCHER' },
     ];
   }
 
@@ -88,6 +85,24 @@ export class GameMap {
     for (const leaf of leaves) {
       const room = this._carveRoom(leaf);
       if (room) { this.rooms.push(room); leaf.room = room; }
+    }
+
+    /* Safety net: on a small grid an unlucky split can leave every leaf
+       under _carveRoom's minimum size, so nothing gets carved. Without at
+       least one room, _placeSpawns() never runs (it bails on an empty
+       this.rooms) and spawnParty() then crashes indexing spawns[0] on an
+       empty playerSpawns array. Force-carve the largest leaf regardless
+       of size so there's always somewhere to spawn into. */
+    if (this.rooms.length === 0 && leaves.length > 0) {
+      const biggest = leaves.reduce((a, b) => (a.w * a.h >= b.w * b.h ? a : b));
+      const w = Math.max(1, Math.min(biggest.w, COLS - 1 - biggest.x));
+      const h = Math.max(1, Math.min(biggest.h, ROWS - 1 - biggest.y));
+      for (let r = biggest.y; r < biggest.y + h; r++)
+        for (let c = biggest.x; c < biggest.x + w; c++)
+          this.tiles[r][c] = T_PLAIN;
+      const room = { x: biggest.x, y: biggest.y, w, h };
+      this.rooms.push(room);
+      biggest.room = room;
     }
 
     /* 2. Non-linear connectivity — connect as a web, not a chain
@@ -123,7 +138,19 @@ export class GameMap {
 
   /* ── BSP ── */
   _split(node, leaves, depth) {
-    const MIN = 5, MAX_D = 4;
+    /* MIN scales down with the smaller 16×12 grid (was 5 against the old
+       20×15) so the BSP still gets a couple of split levels instead of the
+       root leafing out immediately into one or two oversized rooms — a
+       node leafs out the moment *either* dimension dips below MIN*2, so
+       MIN needs to stay comfortably under half of root w/h (14×10), not
+       just scaled proportionally.
+       MIN must also stay >= _carveRoom's (minSize + 2) — a leaf as small
+       as MIN can result from a split, and _carveRoom needs leaf.dim - 2
+       to reach its own minimum or it carves nothing at all. Dropped below
+       that once (MIN=3 vs the old minSize=3, i.e. needed MIN>=5) and most
+       leaves silently failed to become rooms — regenerating repeatedly
+       produced single-room, sometimes even zero-room, levels. */
+    const MIN = 4, MAX_D = 4;
     if (depth >= MAX_D || node.w < MIN * 2 || node.h < MIN * 2) { leaves.push(node); return; }
     const horiz = node.w >= node.h;
     if (horiz) {
@@ -140,10 +167,12 @@ export class GameMap {
   }
 
   _carveRoom(leaf) {
-    const minW = 3, minH = 3;
+    const minW = 2, minH = 2;
     /* Surprise: pacing through room-size variation.
-       Occasionally generate tiny (3x3) or large (8x6) rooms
-       for dramatic shifts in tactical feel. */
+       Occasionally generate tiny (2x2) or large (8x6) rooms
+       for dramatic shifts in tactical feel. Must stay <= MIN(_split) - 2,
+       or leaves at the smallest size _split can produce fail to carve
+       anything at all — see the comment on MIN in _split. */
     const maxW = Math.min(8, leaf.w - 2);
     const maxH = Math.min(6, leaf.h - 2);
     if (maxW < minW || maxH < minH) return null;
