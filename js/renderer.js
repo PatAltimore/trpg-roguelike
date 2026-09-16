@@ -18,27 +18,27 @@ const FONT = '"Press Start 2P", monospace';
 const SIDEBAR_MIN_SCALE = 2.0;
 const SIDEBAR_SCALE_CAP = 2.6;
 
-/* The info panel's display content — unit stats, terrain, combat/heal/
-   steal forecasts, play log — gets a further boost on top of the ambient
-   scale above, in portrait only. The action buttons stay at the ambient
-   scale alone (confirmed a good size already), so this only multiplies
-   the font/spacing constants those specific draw calls use; it does not
-   touch their width, so it can't overflow the pane.
-   Because it needs more vertical room, the portrait sidebar's local
-   height budget grows from CANVAS_H to PORTRAIT_INFO_BUDGET (see
-   _applyLayout) — and since the map's own fit-to-screen zoom is bound by
-   *whichever* of width or height is tighter, growing that budget past
-   ~mapW/mapH-and-viewport-aspect-implied headroom makes the fit go
-   height-bound and shrinks the map. PORTRAIT_INFO_BUDGET is kept close to
-   the actual worst-case content height (see the comment above
-   _sidebar()'s budget math) specifically to avoid that: pushing it much
-   higher doesn't make the text any bigger on screen (the shrinking zoom
-   cancels the boost back out) and can shrink the map severely (confirmed
-   experimentally at INFO_BOOST=4 / budget=2200 — the map nearly
-   disappeared off the top of the viewport). 2 / 1050 was the largest
-   pairing that stayed clear of that cliff in testing. */
-const INFO_BOOST = 2;
-const PORTRAIT_INFO_BUDGET = 1050;
+/* Every text element in the info panel — unit stats, terrain, combat/
+   heal/steal forecasts, play log, and the header (LEVEL/floor/phase/
+   turn) — is drawn at this one consistent size, so nothing in the pane
+   reads bigger or smaller than anything else. It used to get an extra
+   2x boost on top of the ambient scale below (in portrait only), which
+   made it inconsistent with the header text (drawn at the ambient scale
+   alone) — retired in favor of one flat size for all of it, matching
+   the header's own "LEVEL 1" size, confirmed the right readable size.
+   The action buttons stay at the ambient scale alone (confirmed a good
+   size already) and are untouched by this constant. */
+const PANE_FONT = 10;
+
+/* Local height budget for the portrait sidebar's content (see
+   _applyLayout) — since every element now scales only with the ambient
+   ratio below rather than an extra content-specific multiplier, this no
+   longer needs the much larger budget the old 2x-boosted content used
+   to require. Growing this past what the content actually needs shrinks
+   the map (the fit-to-screen zoom goes height-bound instead of
+   width-bound — see the comment above _sidebar()'s budget math), so it's
+   kept close to the real worst-case content height. */
+const PORTRAIT_INFO_BUDGET = 620;
 
 /* Portrait title-screen canvas — genuinely portrait-shaped (unlike the
    1024×600 landscape one) so the starfield background, battle scene and
@@ -803,19 +803,28 @@ export class Renderer {
     c.fillStyle = pct > 0.5 ? C.HP_OK : pct > 0.25 ? C.HP_MID : C.HP_LOW;
     c.fillRect(x0+3, by, Math.floor(bw * pct), 5);
 
-    /* label — on the chest, but low enough (y+26, not the chest's own
-       y+14..y+30 center of y+22) to clear the head (y+4..y+18) — a
-       centered 12px glyph reaches ~6px above its anchor, so anchoring at
-       the chest's true center let it graze the chin. Outlined so the
-       letter reads clearly against whatever body color is behind it.
-       textBaseline is reset after — nothing else in this file sets it, so
-       everything drawn later (sidebar, etc.) assumes the 'alphabetic'
-       default. */
-    c.font = 'bold 12px monospace'; c.textAlign = 'center'; c.textBaseline = 'middle';
-    c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,0.85)';
-    c.strokeText(u.lbl, x + 20, y + 26);
+    /* label — sized as a fraction of the tile so it scales with TILE, at
+       full tile size (0.5) it read as too big/loud for every unit at
+       once, so it's smaller by default. Anchored on its bottom edge just
+       above the HP bar (not centered on the shirt) so it sits lower,
+       clear of the face, in the open space above the bar — using a
+       'bottom' baseline means that clearance holds regardless of font
+       size, so the selected unit's bigger label doesn't need a separate
+       anchor. The selected unit's label grows back to that original
+       bigger/bolder size so the one unit you're actually looking at is
+       easy to pick out. Heavily outlined so the letter still reads over
+       any body/team color. textBaseline is reset after — nothing else in
+       this file sets it, so everything drawn later (sidebar, etc.)
+       assumes the 'alphabetic' default. */
+    const selected = g.sel === u;
+    const lblSize = Math.round(T * (selected ? 0.5 : 0.3));
+    const lx = x0 + T / 2, ly = y0 + T - 10; // centered, bottom-anchored just above the HP bar
+    c.font = `bold ${lblSize}px monospace`; c.textAlign = 'center'; c.textBaseline = 'bottom';
+    c.lineWidth = Math.max(2, Math.round(T * (selected ? 0.08 : 0.05)));
+    c.strokeStyle = 'rgba(0,0,0,0.9)';
+    c.strokeText(u.lbl, lx, ly);
     c.fillStyle = '#fff';
-    c.fillText(u.lbl, x + 20, y + 26);
+    c.fillText(u.lbl, lx, ly);
     c.textBaseline = 'alphabetic';
   }
 
@@ -853,10 +862,6 @@ export class Renderer {
        it, filling the space without any per-element rework or distortion. */
     const lw = sw / scale; // local width — always resolves back to `sw` once scaled
     const localBudget = sh / scale; // local height budget (bigger in portrait — see _applyLayout)
-    /* the info content (unit stats, terrain, forecasts, play log) gets a
-       further boost on top of `scale` above — reported unreadable even
-       after that, unlike the buttons, which stay at `scale` alone */
-    const infoBoost = scale > 1 ? INFO_BOOST : 1;
 
     c.save();
     c.translate(sx, sy);
@@ -912,24 +917,24 @@ export class Renderer {
 
     /* unit info */
     const u = g.sel || this._unitAt(g, g.cur);
-    if (u) y = this._unitPanel(u, px, y, lw - 20, infoBoost);
+    if (u) y = this._unitPanel(u, px, y, lw - 20);
 
     /* terrain — suppressed while a combat/heal/steal forecast is active so the
        forecast always fits between the unit panel and the log without clipping */
-    if (g.cur && !g.preview) y = this._terrainPanel(g, px, y, lw - 20, infoBoost);
+    if (g.cur && !g.preview) y = this._terrainPanel(g, px, y, lw - 20);
 
     /* combat / heal / steal preview */
     if (g.preview) {
-      if (g.preview.heal)       { this._healPreview(g.preview, 0, y, lw, infoBoost);  y += 70 * infoBoost; }
-      else if (g.preview.steal) { this._stealPreview(g.preview, 0, y, lw, infoBoost); y += 70 * infoBoost; }
-      else                      { this._combatPreview(g.preview, 0, y, lw, infoBoost); y += 120 * infoBoost; }
-      y += 8 * infoBoost;
+      if (g.preview.heal)       { this._healPreview(g.preview, 0, y, lw);  y += 78; }
+      else if (g.preview.steal) { this._stealPreview(g.preview, 0, y, lw); y += 78; }
+      else                      { this._combatPreview(g.preview, 0, y, lw); y += 132; }
+      y += 8;
     }
 
     /* play log — fills whatever room is left down to the bottom of the
        pane, so the space freed up above goes toward more visible history
        rather than sitting blank */
-    this._playLog(g, 0, y, lw, localBudget - 10 - y, infoBoost);
+    this._playLog(g, 0, y, lw, localBudget - 10 - y);
 
     c.restore();
 
@@ -966,44 +971,44 @@ export class Renderer {
     return [...g.players, ...g.enemies].find(u => u.alive && u.x === cur.x && u.y === cur.y) || null;
   }
 
-  _unitPanel(u, x, y, w, boost = 1) {
+  _unitPanel(u, x, y, w) {
     const c = this.cx;
     const invCount = u.inventory ? u.inventory.length : 0;
     /* stats grid — as many columns as the width comfortably fits (down to
-       1 for very narrow/heavily-boosted layouts), column width and the
-       label-value gap both derived from the actual width so it can never
-       overflow regardless of how narrow or wide `w` ends up */
+       1 for very narrow layouts), column width and the label-value gap
+       both derived from the actual width so it can never overflow
+       regardless of how narrow or wide `w` ends up */
     const cols = w >= 340 ? 4 : w >= 170 ? 2 : 1;
     const colW = Math.floor(w / cols);
     const valOffset = Math.floor(colW * 0.55);
     const stats = [['STR',u.str],['MAG',u.mag],['SKL',u.skl],['SPD',u.spd],['LCK',u.lck],['DEF',u.def],['RES',u.res],['MOV',u.mov]];
     const gridRows = Math.ceil(stats.length / cols);
-    const rowH = 16 * boost;
-    const gridH = gridRows * rowH + 8 * boost;
-    const panelH = 54*boost + gridH + 54*boost + (invCount > 0 ? (14 + invCount * 12) * boost : 0);
+    const rowH = 18;
+    const gridH = gridRows * rowH + 8;
+    const panelH = 60 + gridH + 60 + (invCount > 0 ? 18 + invCount * 16 : 0);
 
     c.fillStyle = u.isPlayer ? '#1a1a50' : '#501a1a';
     c.fillRect(x-4, y, w+8, panelH);
     c.strokeStyle = u.isPlayer ? '#3030a0' : '#a03030';
     c.lineWidth = 1; c.strokeRect(x-4, y, w+8, panelH);
 
-    y += 12*boost;
-    c.fillStyle = C.GOLD; c.font = `${8*boost}px ${FONT}`; c.textAlign = 'left';
-    c.fillText(u.name, x, y); y += 13*boost;
-    c.fillStyle = '#8080b0'; c.font = `${6*boost}px ${FONT}`;
-    c.fillText(`${u.className}  Lv.${u.level}  ${u.weapon.name}`, x, y); y += 13*boost;
+    y += 14;
+    c.fillStyle = C.GOLD; c.font = `${PANE_FONT}px ${FONT}`; c.textAlign = 'left';
+    c.fillText(u.name, x, y); y += 16;
+    c.fillStyle = '#8080b0'; c.font = `${PANE_FONT}px ${FONT}`;
+    c.fillText(`${u.className}  Lv.${u.level}  ${u.weapon.name}`, x, y); y += 16;
 
     /* HP bar */
     const pct = u.hp / u.maxHp;
-    const barH = 8 * boost;
+    const barH = 10;
     c.fillStyle = C.HP_BG; c.fillRect(x, y, w, barH);
     c.fillStyle = pct > 0.5 ? C.HP_OK : pct > 0.25 ? C.HP_MID : C.HP_LOW;
     c.fillRect(x, y, Math.floor(w * pct), barH);
-    c.fillStyle = '#fff'; c.font = `${6*boost}px monospace`;
-    c.fillText(`${u.hp}/${u.maxHp}`, x+2, y+barH-1); y += 16*boost;
+    c.fillStyle = '#fff'; c.font = `${PANE_FONT}px monospace`;
+    c.fillText(`${u.hp}/${u.maxHp}`, x+2, y+barH-1); y += 20;
 
     /* stats grid */
-    c.font = `${7*boost}px ${FONT}`;
+    c.font = `${PANE_FONT}px ${FONT}`;
     for (let i = 0; i < stats.length; i++) {
       const col = i % cols, row = (i / cols) | 0;
       const sx = x + col * colW, sy = y + row * rowH;
@@ -1014,59 +1019,58 @@ export class Renderer {
 
     /* inventory */
     if (invCount > 0) {
-      c.fillStyle = '#6060a0'; c.font = `${6*boost}px ${FONT}`;
-      c.fillText('ITEMS', x, y); y += 10*boost;
-      c.font = `${6*boost}px ${FONT}`;
+      c.fillStyle = '#6060a0'; c.font = `${PANE_FONT}px ${FONT}`;
+      c.fillText('ITEMS', x, y); y += 14;
       for (const item of u.inventory) {
         c.fillStyle = item.type === 'weapon' ? '#80b0ff' : '#80ff80';
         c.fillText('• ' + item.name, x + 4, y);
-        y += 12*boost;
+        y += 16;
       }
     }
 
-    return y + 4*boost;
+    return y + 4;
   }
 
-  _terrainPanel(g, x, y, w, boost = 1) {
+  _terrainPanel(g, x, y, w) {
     const c = this.cx, t = g.map.at(g.cur.x, g.cur.y);
-    y += 6*boost;
-    const panelH = 54 * boost;
+    y += 6;
+    const panelH = 62;
     c.fillStyle = '#101020'; c.fillRect(x-4, y, w+8, panelH);
     c.strokeStyle = '#303050'; c.lineWidth = 1; c.strokeRect(x-4, y, w+8, panelH);
-    y += 12*boost;
-    c.fillStyle = C.GOLD; c.font = `${8*boost}px ${FONT}`; c.textAlign = 'left';
-    c.fillText(t.name, x, y); y += 14*boost;
-    c.fillStyle = C.TXT; c.font = `${7*boost}px ${FONT}`;
-    c.fillText(`DEF +${t.def}  AVO +${t.avo}`, x, y); y += 12*boost;
-    c.fillText(`Move: ${t.cost >= 99 ? '--' : t.cost}`, x, y); y += 22*boost;
+    y += 14;
+    c.fillStyle = C.GOLD; c.font = `${PANE_FONT}px ${FONT}`; c.textAlign = 'left';
+    c.fillText(t.name, x, y); y += 16;
+    c.fillStyle = C.TXT; c.font = `${PANE_FONT}px ${FONT}`;
+    c.fillText(`DEF +${t.def}  AVO +${t.avo}`, x, y); y += 14;
+    c.fillText(`Move: ${t.cost >= 99 ? '--' : t.cost}`, x, y); y += 24;
     return y;
   }
 
-  _combatPreview(pv, sx, y, sw, boost = 1) {
+  _combatPreview(pv, sx, y, sw) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    const panelH = 120 * boost;
+    const panelH = 130;
     c.fillStyle = '#0d0d20'; c.fillRect(x-4, y, w+8, panelH);
     c.strokeStyle = '#8020c0'; c.lineWidth = 2; c.strokeRect(x-4, y, w+8, panelH);
 
-    c.fillStyle = '#c080ff'; c.font = `${8*boost}px ${FONT}`; c.textAlign = 'center';
-    c.fillText('COMBAT FORECAST', sx + sw/2, y + 12*boost);
+    c.fillStyle = '#c080ff'; c.font = `${PANE_FONT}px ${FONT}`; c.textAlign = 'center';
+    c.fillText('COMBAT FORECAST', sx + sw/2, y + 16);
 
-    c.textAlign = 'left'; c.font = `${7*boost}px ${FONT}`;
+    c.textAlign = 'left'; c.font = `${PANE_FONT}px ${FONT}`;
     /* attacker */
-    c.fillStyle = '#8080ff'; c.fillText(pv.atk.name, x, y + 28*boost);
+    c.fillStyle = '#8080ff'; c.fillText(pv.atk.name, x, y + 32);
     c.fillStyle = C.TXT;
-    c.fillText(`DMG ${pv.af.dmg}  HIT ${pv.af.hit}%`, x, y + 42*boost);
-    c.fillText(`CRT ${pv.af.crit}%${pv.af.doubles ? '  x2' : ''}`, x, y + 54*boost);
+    c.fillText(`DMG ${pv.af.dmg}  HIT ${pv.af.hit}%`, x, y + 48);
+    c.fillText(`CRT ${pv.af.crit}%${pv.af.doubles ? '  x2' : ''}`, x, y + 62);
 
-    c.fillStyle = '#404060'; c.fillRect(x, y + 60*boost, w, 1);
+    c.fillStyle = '#404060'; c.fillRect(x, y + 68, w, 1);
     /* defender */
-    c.fillStyle = '#ff8080'; c.fillText(pv.def.name, x, y + 74*boost);
+    c.fillStyle = '#ff8080'; c.fillText(pv.def.name, x, y + 84);
     if (pv.df) {
       c.fillStyle = C.TXT;
-      c.fillText(`DMG ${pv.df.dmg}  HIT ${pv.df.hit}%`, x, y + 88*boost);
-      c.fillText(`CRT ${pv.df.crit}%${pv.df.doubles ? '  x2' : ''}`, x, y + 100*boost);
+      c.fillText(`DMG ${pv.df.dmg}  HIT ${pv.df.hit}%`, x, y + 100);
+      c.fillText(`CRT ${pv.df.crit}%${pv.df.doubles ? '  x2' : ''}`, x, y + 114);
     } else {
-      c.fillStyle = '#666'; c.fillText('Cannot counter', x, y + 88*boost);
+      c.fillStyle = '#666'; c.fillText('Cannot counter', x, y + 100);
     }
   }
 
@@ -1124,10 +1128,10 @@ export class Renderer {
 
   /* ═══════════ PLAY LOG ═══════════ */
 
-  _playLog(g, sx, y, sw, maxH, boost = 1) {
+  _playLog(g, sx, y, sw, maxH) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    const LINE_H = 14 * boost;
-    const headH = 14 * boost, padH = 11 * boost;
+    const LINE_H = 16;
+    const headH = 18, padH = 12;
     /* fill however much room is actually left above the bottom of the pane
        instead of a fixed 7 lines — the space freed up by moving the
        buttons to the top (see _sidebar) goes toward showing more history */
@@ -1151,24 +1155,24 @@ export class Renderer {
     this._logPanelBounds = { x: x - 4, y, w: w + 8, h: panelH };
 
     /* header row */
-    c.fillStyle = '#4040a0'; c.font = `${6*boost}px ${FONT}`; c.textAlign = 'left';
-    c.fillText('PLAY LOG', x, y + 10*boost);
+    c.fillStyle = '#4040a0'; c.font = `${PANE_FONT}px ${FONT}`; c.textAlign = 'left';
+    c.fillText('PLAY LOG', x, y + 13);
 
     /* rewind charge counter — far right of header */
-    const rbw = 44*boost, rbh = 13*boost, rbx = sx + sw - rbw - 6*boost, rby = y + 1*boost;
+    const rbw = 48, rbh = 15, rbx = sx + sw - rbw - 6, rby = y + 1;
     c.fillStyle = hasRewind ? '#0e1e2e' : '#0a0a0a';
     c.fillRect(rbx, rby, rbw, rbh);
     c.strokeStyle = hasRewind ? '#30b0e0' : '#252530';
     c.lineWidth = 1; c.strokeRect(rbx, rby, rbw, rbh);
     c.fillStyle = hasRewind ? '#40d0f0' : '#303040';
-    c.font = `${6*boost}px ${FONT}`; c.textAlign = 'center';
-    c.fillText(`↺ ${g.rewindsLeft}`, rbx + rbw / 2, rby + 9*boost);
+    c.font = `7px ${FONT}`; c.textAlign = 'center';
+    c.fillText(`↺ ${g.rewindsLeft}`, rbx + rbw / 2, rby + 10);
     c.textAlign = 'left';
     this._rewindBtnBounds = { x: rbx, y: rby, w: rbw, h: rbh };
 
     /* scroll arrow buttons — just left of the rewind counter */
-    const arH = 13*boost, arW = 13*boost, arGap = 2*boost;
-    const arDnX = rbx - arW - 4*boost;
+    const arH = 15, arW = 15, arGap = 2;
+    const arDnX = rbx - arW - 4;
     const arUpX = arDnX - arW - arGap;
     const arY   = rby;
 
@@ -1178,8 +1182,8 @@ export class Renderer {
     c.strokeStyle = canScrollUp ? '#2080a0' : '#202030';
     c.lineWidth = 1; c.strokeRect(arUpX, arY, arW, arH);
     c.fillStyle = canScrollUp ? '#60c0e0' : '#303040';
-    c.font = `${8*boost}px ${FONT}`; c.textAlign = 'center';
-    c.fillText('▲', arUpX + arW / 2, arY + 10*boost);
+    c.font = `9px ${FONT}`; c.textAlign = 'center';
+    c.fillText('▲', arUpX + arW / 2, arY + 11);
     this._logScrollUp = { x: arUpX, y: arY, w: arW, h: arH };
 
     /* down button */
@@ -1188,8 +1192,8 @@ export class Renderer {
     c.strokeStyle = canScrollDown ? '#2080a0' : '#202030';
     c.lineWidth = 1; c.strokeRect(arDnX, arY, arW, arH);
     c.fillStyle = canScrollDown ? '#60c0e0' : '#303040';
-    c.font = `${8*boost}px ${FONT}`; c.textAlign = 'center';
-    c.fillText('▼', arDnX + arW / 2, arY + 10*boost);
+    c.font = `9px ${FONT}`; c.textAlign = 'center';
+    c.fillText('▼', arDnX + arW / 2, arY + 11);
     this._logScrollDown = { x: arDnX, y: arY, w: arW, h: arH };
 
     /* entries */
@@ -1201,15 +1205,15 @@ export class Renderer {
 
     /* "older above" gradient hint */
     if (canScrollUp) {
-      const grd = c.createLinearGradient(0, y + headH, 0, y + headH + 12*boost);
+      const grd = c.createLinearGradient(0, y + headH, 0, y + headH + 12);
       grd.addColorStop(0, 'rgba(40,50,100,0.5)');
       grd.addColorStop(1, 'rgba(40,50,100,0)');
       c.fillStyle = grd;
-      c.fillRect(x - 4, y + headH, w + 8, 12*boost);
+      c.fillRect(x - 4, y + headH, w + 8, 12);
     }
 
-    const entryFont = 9 * boost;
-    let ey = y + headH + 11*boost;
+    const entryFont = PANE_FONT;
+    let ey = y + headH + 12;
     for (const entry of entries) {
       const ebx = x - 4, ebw = w + 8, ebh = LINE_H;
       const isSelected = entry === selectedEntry;
@@ -1218,17 +1222,17 @@ export class Renderer {
       /* highlight selected entry; every entry is navigable so all get a subtle row tint */
       if (isSelected) {
         c.fillStyle = 'rgba(60,80,200,0.38)';
-        c.fillRect(ebx, ey - 10*boost, ebw, ebh);
+        c.fillRect(ebx, ey - 11, ebw, ebh);
         c.strokeStyle = 'rgba(100,140,255,0.65)';
-        c.lineWidth = 1; c.strokeRect(ebx, ey - 10*boost, ebw, ebh);
+        c.lineWidth = 1; c.strokeRect(ebx, ey - 11, ebw, ebh);
       } else {
         c.fillStyle = 'rgba(30,30,80,0.14)';
-        c.fillRect(ebx, ey - 10*boost, ebw, ebh);
+        c.fillRect(ebx, ey - 11, ebw, ebh);
       }
 
       /* entry text — proportional sans-serif for clarity */
       let txt = entry.text;
-      const maxChars = Math.floor((w - 16*boost) / (5.2 * boost)); // ~5.2px per char at 9px Arial
+      const maxChars = Math.floor((w - 16) / 5.8); // ~5.8px per char at 10px Arial
       if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '…';
       c.fillStyle = isSelected ? '#c0d0ff' : entry.color;
       c.font = `${entryFont}px Arial, sans-serif`;
@@ -1238,22 +1242,22 @@ export class Renderer {
       /* selected entry gets a small marker to remind the player this is the restore point */
       if (isSelected) {
         c.fillStyle = '#6080c0';
-        c.font = `${6*boost}px ${FONT}`;
+        c.font = `7px ${FONT}`;
         c.textAlign = 'right';
-        c.fillText('↺', sx + sw - 10*boost, ey);
+        c.fillText('↺', sx + sw - 10, ey);
       }
 
-      this._logEntryBounds.push({ x: ebx, y: ey - 10*boost, w: ebw, h: ebh, entry });
+      this._logEntryBounds.push({ x: ebx, y: ey - 11, w: ebw, h: ebh, entry });
       ey += LINE_H;
     }
 
     /* "newer below" gradient hint */
     if (canScrollDown) {
-      const grd = c.createLinearGradient(0, y + panelH - 14*boost, 0, y + panelH - 2*boost);
+      const grd = c.createLinearGradient(0, y + panelH - 14, 0, y + panelH - 2);
       grd.addColorStop(0, 'rgba(40,50,100,0)');
       grd.addColorStop(1, 'rgba(40,50,100,0.5)');
       c.fillStyle = grd;
-      c.fillRect(x - 4, y + panelH - 14*boost, w + 8, 12*boost);
+      c.fillRect(x - 4, y + panelH - 14, w + 8, 12);
     }
 
     c.restore();
@@ -1390,21 +1394,17 @@ export class Renderer {
     c.fillStyle = 'rgba(0,0,0,0.65)';
     c.fillRect(0, 0, mapW, mapH);
 
-    /* The dialog aims to match the info pane's own font boost (ambient
-       sidebar scale × INFO_BOOST in portrait) — drawn at its normal size
-       then stretched from the map's center point, the same technique the
-       sidebar uses so none of the many offsets below need to be
-       individually rewritten. Unlike the sidebar, though, this dialog is
-       confined to the fixed-size map area — it can't grow the canvas to
-       make room the way the pane does. The full sidebar boost overflowed
-       the map badly (confirmed: ~1520×752 against an 800×600 map, with
-       the CANCEL button pushed off-screen entirely), so it's capped at
-       whatever still leaves the box safely inside the map — as close to
-       the pane's size as this dialog can actually get. */
+    /* The dialog aims to match the info pane's own ambient scale — drawn
+       at its normal size then stretched from the map's center point, the
+       same technique the sidebar uses so none of the many offsets below
+       need to be individually rewritten. Unlike the sidebar, though, this
+       dialog is confined to the fixed-size map area — it can't grow the
+       canvas to make room the way the pane does, so it's capped at
+       whatever still leaves the box safely inside the map. */
     const ow = 380, oh = 188;
     const scale = this._sideRect.scale;
     const maxSafeBoost = Math.min((mapW * 0.92) / ow, (mapH * 0.92) / oh);
-    const boost = scale > 1 ? Math.min(scale * INFO_BOOST, maxSafeBoost) : 1;
+    const boost = scale > 1 ? Math.min(scale, maxSafeBoost) : 1;
     const mx0 = mapW / 2, my0 = mapH / 2;
     c.save();
     c.translate(mx0, my0);
@@ -1725,41 +1725,41 @@ export class Renderer {
   }
 
   /* ═══════════ HEAL PREVIEW ═══════════ */
-  _healPreview(pv, sx, y, sw, boost = 1) {
+  _healPreview(pv, sx, y, sw) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    const panelH = 70 * boost;
+    const panelH = 78;
     c.fillStyle = '#0d200d'; c.fillRect(x - 4, y, w + 8, panelH);
     c.strokeStyle = '#20c040'; c.lineWidth = 2; c.strokeRect(x - 4, y, w + 8, panelH);
 
-    c.fillStyle = '#60ff80'; c.font = `${8*boost}px ${FONT}`; c.textAlign = 'center';
-    c.fillText('HEAL PREVIEW', sx + sw / 2, y + 14*boost);
+    c.fillStyle = '#60ff80'; c.font = `${PANE_FONT}px ${FONT}`; c.textAlign = 'center';
+    c.fillText('HEAL PREVIEW', sx + sw / 2, y + 16);
 
-    c.textAlign = 'left'; c.font = `${7*boost}px ${FONT}`;
+    c.textAlign = 'left'; c.font = `${PANE_FONT}px ${FONT}`;
     c.fillStyle = '#80ff80';
-    c.fillText(pv.target.name, x, y + 32*boost);
+    c.fillText(pv.target.name, x, y + 36);
     c.fillStyle = C.TXT;
-    c.fillText(`HP ${pv.target.hp}/${pv.target.maxHp}  →  ${Math.min(pv.target.maxHp, pv.target.hp + pv.amount)}`, x, y + 48*boost);
+    c.fillText(`HP ${pv.target.hp}/${pv.target.maxHp}  →  ${Math.min(pv.target.maxHp, pv.target.hp + pv.amount)}`, x, y + 54);
     c.fillStyle = '#60ff80';
-    c.fillText(`+${pv.amount} HP`, x, y + 62*boost);
+    c.fillText(`+${pv.amount} HP`, x, y + 70);
   }
 
   /* STEAL PREVIEW */
-  _stealPreview(pv, sx, y, sw, boost = 1) {
+  _stealPreview(pv, sx, y, sw) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    const panelH = 70 * boost;
+    const panelH = 78;
     c.fillStyle = '#1a1a0d'; c.fillRect(x - 4, y, w + 8, panelH);
     c.strokeStyle = '#c0a020'; c.lineWidth = 2; c.strokeRect(x - 4, y, w + 8, panelH);
 
-    c.fillStyle = '#ffd740'; c.font = `${8*boost}px ${FONT}`; c.textAlign = 'center';
-    c.fillText('STEAL PREVIEW', sx + sw / 2, y + 14*boost);
+    c.fillStyle = '#ffd740'; c.font = `${PANE_FONT}px ${FONT}`; c.textAlign = 'center';
+    c.fillText('STEAL PREVIEW', sx + sw / 2, y + 16);
 
-    c.textAlign = 'left'; c.font = `${7*boost}px ${FONT}`;
+    c.textAlign = 'left'; c.font = `${PANE_FONT}px ${FONT}`;
     c.fillStyle = '#ff8080';
-    c.fillText(pv.target.name, x, y + 32*boost);
+    c.fillText(pv.target.name, x, y + 36);
     c.fillStyle = C.TXT;
-    c.fillText(`Item: ${pv.item.name}`, x, y + 48*boost);
+    c.fillText(`Item: ${pv.item.name}`, x, y + 54);
     c.fillStyle = '#ffd740';
-    c.fillText(`${pv.chance}% chance`, x, y + 62*boost);
+    c.fillText(`${pv.chance}% chance`, x, y + 70);
   }
 
 
@@ -1803,14 +1803,16 @@ export class Renderer {
     const startX = (CW - gridW) / 2;
     const startY = lordY + lordH + 20;
 
-    /* portrait cards get noticeably bigger text throughout — both because
-       they're wider (so the extra width doesn't sit blank) and because
-       phone-screen readability is the priority here over density */
+    /* class name uses the same font size as the info pane's "LEVEL 1"
+       header (PANE_FONT) so text reads consistently across screens;
+       portrait cards are still much bigger than landscape ones (more
+       width per card, single column), so that extra room goes toward
+       breathing room around the text rather than inflating it further */
     const wide = cardW >= 400;
     const statColW  = wide ? Math.floor((cardW - 28) / 4) : 52;
-    const nameFont  = portrait ? 19 : 10;
-    const subFont   = portrait ? 14 : 7;
-    const smallFont = portrait ? 12 : 6;
+    const nameFont  = PANE_FONT;
+    const subFont   = 7;
+    const smallFont = 6;
     /* row Y-offsets (from the card's top) scale up together with the fonts
        above so lines don't crowd each other as they get taller */
     const rowName  = portrait ? 30  : 18;

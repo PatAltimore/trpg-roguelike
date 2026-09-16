@@ -1,10 +1,13 @@
-/* Bigger, fewer tiles — a casual, chunkier grid. TILE*COLS and TILE*ROWS
-   are kept equal to the old 800×600 map area (20×40 and 15×40) so the
-   canvas/layout math elsewhere (which derives everything from those
-   products, not from COLS/ROWS/TILE individually) doesn't need to change. */
-export const TILE = 50;
-export const COLS = 16;
-export const ROWS = 12;
+/* Bigger, fewer tiles — a casual, chunkier grid, so the unit icons (and
+   their identifying letter) render bigger and easier to read. TILE*ROWS
+   is kept equal to the original 600px map height so layout math derived
+   from that product doesn't shift; TILE*COLS is allowed to grow a bit
+   past the original 800px width — nothing hardcodes that number, it's
+   all derived from COLS*TILE, so the canvas/zoom math elsewhere adapts
+   automatically. */
+export const TILE = 60;
+export const COLS = 14;
+export const ROWS = 10;
 export const SIDEBAR_W = 224;
 export const CANVAS_W = COLS * TILE + SIDEBAR_W;
 export const CANVAS_H = ROWS * TILE;

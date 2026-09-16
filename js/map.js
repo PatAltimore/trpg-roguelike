@@ -43,34 +43,32 @@ export class GameMap {
        Room C → forts & ranged threats (risk/reward positioning)     */
   _generateTutorial() {
     const MAP = [
-      'WWWWWWWWWWWWWWWW',
-      'W.....WW..FF...W',
-      'W.....RR...F...W',
-      'W.....WW.......W',
-      'WWWWWWW........W',
-      'WWWWWWWWWWRRWWWW',
-      'WWWWWWWWWWRRWWWW',
-      'WWWWWWWWW......W',
-      'WWWWWWWWW..T...W',
-      'WWWWWWWWW......W',
-      'WWWWWWWWWWWWWWWW',
-      'WWWWWWWWWWWWWWWW',
+      'WWWWWWWWWWWWWW',
+      'W.....W...FF.W',
+      'W.....R......W',
+      'W.....W......W',
+      'WWWWWWWWWWRWWW',
+      'WWWWWWWWWWRWWW',
+      'WWWWWWWWWWRWWW',
+      'WWWWWWWW.....W',
+      'WWWWWWWW...T.W',
+      'WWWWWWWWWWWWWW',
     ];
     const CH = { W: T_WALL, '.': T_PLAIN, R: T_ROAD, F: T_FOREST, T: T_FORT };
     this.tiles = MAP.map(row => [...row].map(ch => CH[ch] || T_WALL));
     this.rooms = [
       { x: 1, y: 1, w: 5, h: 3 },
-      { x: 8, y: 1, w: 7, h: 4 },
-      { x: 9, y: 7, w: 6, h: 3 },
+      { x: 7, y: 1, w: 6, h: 3 },
+      { x: 8, y: 7, w: 5, h: 2 },
     ];
     this.playerSpawns = [
       { x: 2, y: 1 }, { x: 3, y: 1 }, { x: 4, y: 1 },
       { x: 2, y: 2 }, { x: 3, y: 2 }, { x: 4, y: 2 },
     ];
     this.enemySpawns = [
-      { x: 13, y: 1, cls: 'BRIGAND' },
-      { x: 9,  y: 2, cls: 'SOLDIER' },
-      { x: 12, y: 9, cls: 'E_ARCHER' },
+      { x: 12, y: 1, cls: 'BRIGAND' },
+      { x: 8,  y: 2, cls: 'SOLDIER' },
+      { x: 9,  y: 7, cls: 'E_ARCHER' },
     ];
   }
 
@@ -138,12 +136,11 @@ export class GameMap {
 
   /* ── BSP ── */
   _split(node, leaves, depth) {
-    /* MIN scales down with the smaller 16×12 grid (was 5 against the old
-       20×15) so the BSP still gets a couple of split levels instead of the
-       root leafing out immediately into one or two oversized rooms — a
-       node leafs out the moment *either* dimension dips below MIN*2, so
-       MIN needs to stay comfortably under half of root w/h (14×10), not
-       just scaled proportionally.
+    /* MIN scales with the 14×10 grid (root is 12×8) so the BSP still gets
+       a couple of split levels instead of the root leafing out immediately
+       into one or two oversized rooms — a node leafs out the moment
+       *either* dimension dips below MIN*2, so MIN needs to stay
+       comfortably under half of root w/h.
        MIN must also stay >= _carveRoom's (minSize + 2) — a leaf as small
        as MIN can result from a split, and _carveRoom needs leaf.dim - 2
        to reach its own minimum or it carves nothing at all. Dropped below
@@ -152,7 +149,12 @@ export class GameMap {
        produced single-room, sometimes even zero-room, levels. */
     const MIN = 4, MAX_D = 4;
     if (depth >= MAX_D || node.w < MIN * 2 || node.h < MIN * 2) { leaves.push(node); return; }
-    const horiz = node.w >= node.h;
+    /* strict `>` (not `>=`) matters here: the 12×8 root's first split
+       leaves 8-wide/8-tall children on a small grid, and treating a tie
+       as "horizontal" would keep cutting the same axis forever, never
+       splitting height — every room would span the same rows. `>` makes
+       a tie fall through to a vertical cut instead. */
+    const horiz = node.w > node.h;
     if (horiz) {
       const s = MIN + Math.floor(Math.random() * (node.w - MIN * 2));
       node.l = new Node(node.x, node.y, s, node.h);
