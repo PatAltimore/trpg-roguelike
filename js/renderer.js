@@ -216,11 +216,14 @@ export class Renderer {
     c.fillRect(0, 0, W, H);
 
     /* stars — fill whatever shape the canvas actually is (portrait or
-       landscape) so the starfield is never a landscape-only backdrop */
-    c.fillStyle = '#fff';
+       landscape) so the starfield is never a landscape-only backdrop.
+       Twinkling (brightness animated per-star via `t`) rather than static,
+       same formula as the victory screen's starfield. */
     for (let i = 0; i < 160; i++) {
       const sx = (i * 137 + 50) % W;
       const sy = (i * 97  + 30) % H;
+      const twinkle = 0.3 + Math.sin(this.t * 0.05 + i * 2) * 0.7;
+      c.fillStyle = `rgba(255,255,255,${Math.max(0, twinkle)})`;
       c.fillRect(sx, sy, 1 + (i % 2), 1 + (i % 2));
     }
 
@@ -1130,7 +1133,7 @@ export class Renderer {
 
   _playLog(g, sx, y, sw, maxH) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    const LINE_H = 16;
+    const LINE_H = 20;
     const headH = 18, padH = 12;
     /* fill however much room is actually left above the bottom of the pane
        instead of a fixed 7 lines — the space freed up by moving the
@@ -1212,8 +1215,8 @@ export class Renderer {
       c.fillRect(x - 4, y + headH, w + 8, 12);
     }
 
-    const entryFont = PANE_FONT;
-    let ey = y + headH + 12;
+    const entryFont = PANE_FONT + 3; // a step above the rest of the pane — this is the text read line-by-line, most often
+    let ey = y + headH + 15;
     for (const entry of entries) {
       const ebx = x - 4, ebw = w + 8, ebh = LINE_H;
       const isSelected = entry === selectedEntry;
@@ -1222,17 +1225,17 @@ export class Renderer {
       /* highlight selected entry; every entry is navigable so all get a subtle row tint */
       if (isSelected) {
         c.fillStyle = 'rgba(60,80,200,0.38)';
-        c.fillRect(ebx, ey - 11, ebw, ebh);
+        c.fillRect(ebx, ey - 14, ebw, ebh);
         c.strokeStyle = 'rgba(100,140,255,0.65)';
-        c.lineWidth = 1; c.strokeRect(ebx, ey - 11, ebw, ebh);
+        c.lineWidth = 1; c.strokeRect(ebx, ey - 14, ebw, ebh);
       } else {
         c.fillStyle = 'rgba(30,30,80,0.14)';
-        c.fillRect(ebx, ey - 11, ebw, ebh);
+        c.fillRect(ebx, ey - 14, ebw, ebh);
       }
 
       /* entry text — proportional sans-serif for clarity */
       let txt = entry.text;
-      const maxChars = Math.floor((w - 16) / 5.8); // ~5.8px per char at 10px Arial
+      const maxChars = Math.floor((w - 16) / 7.5); // ~7.5px per char at 13px Arial
       if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '…';
       c.fillStyle = isSelected ? '#c0d0ff' : entry.color;
       c.font = `${entryFont}px Arial, sans-serif`;
@@ -1247,7 +1250,7 @@ export class Renderer {
         c.fillText('↺', sx + sw - 10, ey);
       }
 
-      this._logEntryBounds.push({ x: ebx, y: ey - 11, w: ebw, h: ebh, entry });
+      this._logEntryBounds.push({ x: ebx, y: ey - 14, w: ebw, h: ebh, entry });
       ey += LINE_H;
     }
 
@@ -1698,9 +1701,12 @@ export class Renderer {
     c.font = `8px ${FONT}`;
     c.fillText(`Levels conquered: ${FINAL_FLOOR}`, mx, 190);
 
-    /* END JOURNEY / CONTINUE QUEST buttons */
+    /* END JOURNEY / CONTINUE QUEST buttons — pinned to the very bottom
+       edge, below the celebrating characters (they bob as low as
+       CANVAS_H-64, see the loop above) so the buttons sit on the ground
+       strip instead of painting over the dancing sprites. */
     const btnW = 174, btnH = 38, btnGap = 20;
-    const btnY = CANVAS_H - 76;
+    const btnY = CANVAS_H - 40;
     const endBx = mx - btnW - btnGap / 2;
     const cntBx = mx + btnGap / 2;
 
@@ -1803,16 +1809,21 @@ export class Renderer {
     const startX = (CW - gridW) / 2;
     const startY = lordY + lordH + 20;
 
-    /* class name uses the same font size as the info pane's "LEVEL 1"
-       header (PANE_FONT) so text reads consistently across screens;
-       portrait cards are still much bigger than landscape ones (more
-       width per card, single column), so that extra room goes toward
-       breathing room around the text rather than inflating it further */
+    /* Landscape class name matches the info pane's "LEVEL 1" header size
+       (PANE_FONT) so text reads consistently between screens there. But
+       unlike the sidebar, this canvas doesn't get an ambient scale
+       transform in portrait — it's fit to the screen by shrinking the
+       whole (much taller, single-column) canvas down, which on its own
+       would make a flat PANE_FONT render tinier than on the info pane
+       (confirmed: ~4px on screen at a typical phone width, vs ~10-13px
+       for the sidebar). So portrait doubles the fonts here to compensate,
+       the same way the sidebar's ambient scale compensates for its own
+       fit-to-screen shrink. */
     const wide = cardW >= 400;
     const statColW  = wide ? Math.floor((cardW - 28) / 4) : 52;
-    const nameFont  = PANE_FONT;
-    const subFont   = 7;
-    const smallFont = 6;
+    const nameFont  = portrait ? PANE_FONT * 2 : PANE_FONT;
+    const subFont   = portrait ? 14 : 7;
+    const smallFont = portrait ? 12 : 6;
     /* row Y-offsets (from the card's top) scale up together with the fonts
        above so lines don't crowd each other as they get taller */
     const rowName  = portrait ? 30  : 18;
