@@ -1133,7 +1133,7 @@ export class Renderer {
 
   _playLog(g, sx, y, sw, maxH) {
     const c = this.cx, x = sx + 10, w = sw - 20;
-    const LINE_H = 20;
+    const LINE_H = 17;
     const headH = 18, padH = 12;
     /* fill however much room is actually left above the bottom of the pane
        instead of a fixed 7 lines — the space freed up by moving the
@@ -1215,8 +1215,8 @@ export class Renderer {
       c.fillRect(x - 4, y + headH, w + 8, 12);
     }
 
-    const entryFont = PANE_FONT + 3; // a step above the rest of the pane — this is the text read line-by-line, most often
-    let ey = y + headH + 15;
+    const entryFont = PANE_FONT + 1; // a touch above the rest of the pane, but Press Start 2P is ~1em/char — bigger than this eats into how much log text fits per line fast
+    let ey = y + headH + 13;
     for (const entry of entries) {
       const ebx = x - 4, ebw = w + 8, ebh = LINE_H;
       const isSelected = entry === selectedEntry;
@@ -1225,18 +1225,18 @@ export class Renderer {
       /* highlight selected entry; every entry is navigable so all get a subtle row tint */
       if (isSelected) {
         c.fillStyle = 'rgba(60,80,200,0.38)';
-        c.fillRect(ebx, ey - 14, ebw, ebh);
+        c.fillRect(ebx, ey - 12, ebw, ebh);
         c.strokeStyle = 'rgba(100,140,255,0.65)';
-        c.lineWidth = 1; c.strokeRect(ebx, ey - 14, ebw, ebh);
+        c.lineWidth = 1; c.strokeRect(ebx, ey - 12, ebw, ebh);
       } else {
         c.fillStyle = 'rgba(30,30,80,0.14)';
-        c.fillRect(ebx, ey - 14, ebw, ebh);
+        c.fillRect(ebx, ey - 12, ebw, ebh);
       }
 
       /* entry text — same pixel font as the rest of the game, not the
          proportional sans-serif this used to borrow for density */
       let txt = entry.text;
-      const maxChars = Math.floor((w - 16) / 13); // Press Start 2P is ~1em per char — measured, not a sans-serif estimate
+      const maxChars = Math.floor((w - 16) / entryFont); // Press Start 2P is ~1em per char — measured, not a sans-serif estimate
       if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '…';
       c.fillStyle = isSelected ? '#c0d0ff' : entry.color;
       c.font = `${entryFont}px ${FONT}`;
@@ -1251,7 +1251,7 @@ export class Renderer {
         c.fillText('↺', sx + sw - 10, ey);
       }
 
-      this._logEntryBounds.push({ x: ebx, y: ey - 14, w: ebw, h: ebh, entry });
+      this._logEntryBounds.push({ x: ebx, y: ey - 12, w: ebw, h: ebh, entry });
       ey += LINE_H;
     }
 
