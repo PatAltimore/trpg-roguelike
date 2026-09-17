@@ -1233,12 +1233,13 @@ export class Renderer {
         c.fillRect(ebx, ey - 14, ebw, ebh);
       }
 
-      /* entry text — proportional sans-serif for clarity */
+      /* entry text — same pixel font as the rest of the game, not the
+         proportional sans-serif this used to borrow for density */
       let txt = entry.text;
-      const maxChars = Math.floor((w - 16) / 7.5); // ~7.5px per char at 13px Arial
+      const maxChars = Math.floor((w - 16) / 13); // Press Start 2P is ~1em per char — measured, not a sans-serif estimate
       if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '…';
       c.fillStyle = isSelected ? '#c0d0ff' : entry.color;
-      c.font = `${entryFont}px Arial, sans-serif`;
+      c.font = `${entryFont}px ${FONT}`;
       c.textAlign = 'left';
       c.fillText(txt, x + 1, ey);
 
