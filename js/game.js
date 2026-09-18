@@ -13,6 +13,14 @@ import { Renderer }              from './renderer.js';
 import { SFX, isMuted, toggleMute } from './audio.js';
 import { TouchController } from './touch.js';
 
+/* XP awards — 100 XP per level (XP_PER_LEVEL in units.js) */
+const XP_MIN_HIT     = 3;   // floor for a landed hit, so chip damage still counts
+const XP_KILL_BASE   = 30;  // + XP_KILL_PER_LV per level of the slain enemy
+const XP_KILL_PER_LV = 5;
+const XP_BOSS_BONUS  = 50;
+const XP_HEAL        = 10;
+const XP_STEAL       = 15;
+
 /* ═══════════ Tutorial messages ═══════════
    Each fires once, triggered by game events.
    Teaches through play — prompts appear at the moment
@@ -84,6 +92,7 @@ class Game {
 
     /* play log */
     this.playLog     = [];   // [{text, color, snap}] — capped at 80 entries
+    this._toasts     = [];   // floating battle text — [{text, color, tx, ty, born}]
     this.snapshots   = [];   // game-state snapshots for rewind
     this.rewindsLeft = 3;    // charges remaining this level
     this._historyView = null; // {snap, entry} when browsing history, null otherwise
@@ -126,11 +135,24 @@ class Game {
 
   /* ═══════════ PLAY LOG & REWIND ═══════════ */
 
-  _addLog(text, color = '#a0a0c0') {
+  /* `at` — a unit or {x, y} tile; when given, the entry also floats over that
+     tile as battle text (see Renderer._battleToasts). */
+  _addLog(text, color = '#a0a0c0', at = null) {
     /* capture the exact playfield state before this entry is added so
        history view can show precisely what the board looked like at this moment */
     this.playLog.push({ text, color, snap: this._captureState() });
     if (this.playLog.length > 120) this.playLog.shift();
+    if (at) this._toasts.push({ text, color, tx: at.x, ty: at.y, born: performance.now() });
+  }
+
+  /* Give a player unit XP; a level-up fully restores its HP (see Unit.levelUp). */
+  _awardXp(u, amount) {
+    if (!u || !u.isPlayer || !u.alive || amount <= 0) return;
+    const gained = u.gainXp(amount);
+    if (gained > 0) {
+      SFX.levelUp();
+      this._addLog(`${u.name} reached Lv.${u.level}! HP restored`, '#ffd700', u);
+    }
   }
 
   /* Shallow-copy of the current playfield — used both by _addLog (per-entry)
@@ -141,6 +163,8 @@ class Game {
       x: u.x, y: u.y, hp: u.hp, alive: u.alive,
       moved: u.moved, acted: u.acted,
       str: u.str, spd: u.spd, def: u.def,
+      mag: u.mag, skl: u.skl, lck: u.lck, res: u.res,
+      maxHp: u.maxHp, level: u.level, xp: u.xp,
       inventory: u.inventory.map(i => ({ ...i })),
     });
     return {
@@ -165,6 +189,8 @@ class Game {
       u.x = s.x; u.y = s.y; u.hp = s.hp; u.alive = s.alive;
       u.moved = s.moved; u.acted = s.acted;
       u.str = s.str; u.spd = s.spd; u.def = s.def;
+      u.mag = s.mag; u.skl = s.skl; u.lck = s.lck; u.res = s.res;
+      u.maxHp = s.maxHp; u.level = s.level; u.xp = s.xp;
       u.inventory = s.inventory.map(i => ({ ...i }));
     };
     snap.playerStates.forEach(restoreUnit);
@@ -253,6 +279,7 @@ class Game {
 
     /* reset log and rewind state for new level */
     this.playLog      = [];
+    this._toasts      = [];
     this.snapshots    = [];
     this.rewindsLeft  = 3;
     this._historyView = null;
@@ -581,8 +608,9 @@ class Game {
       const healAmt = this.sel.mag + this.sel.weapon.mt + 10;
       const actual = Math.min(tgt.maxHp - tgt.hp, healAmt);
       tgt.hp = Math.min(tgt.maxHp, tgt.hp + healAmt);
-      this._addLog(`${this.sel.name} heals ${tgt.name}: +${actual} HP`, '#80ff80');
+      this._addLog(`${this.sel.name} heals ${tgt.name}: +${actual} HP`, '#80ff80', tgt);
       SFX.hit();
+      if (actual > 0) this._awardXp(this.sel, XP_HEAL);
       this.sel.acted = true;
       this._healMode = false;
       this._deselect();
@@ -600,10 +628,11 @@ class Game {
       if (Math.random() * 100 < chance && this.sel.inventory.length < MAX_INVENTORY) {
         const stolen = tgt.inventory.splice(0, 1)[0];
         this.sel.inventory.push(stolen);
-        this._addLog(`${this.sel.name} steals ${stolen.name}!`, '#c0ff80');
+        this._addLog(`${this.sel.name} steals ${stolen.name}!`, '#c0ff80', tgt);
         SFX.hit();
+        this._awardXp(this.sel, XP_STEAL);
       } else {
-        this._addLog(`${this.sel.name}: steal failed!`, '#a0a060');
+        this._addLog(`${this.sel.name}: steal failed!`, '#a0a060', tgt);
         SFX.miss();
       }
       this.sel.acted = true;
@@ -760,15 +789,24 @@ class Game {
       if (!entry.hit) {
         SFX.miss();
         this._addLog(`${entry.src.name}: Miss!`,
-          entry.src.isPlayer ? '#8080ff' : '#ff8080');
+          entry.src.isPlayer ? '#8080ff' : '#ff8080', entry.tgt);
       } else if (entry.crit) {
         SFX.crit();
         this._addLog(`${entry.src.name} CRIT! ${entry.dmg} dmg`,
-          entry.src.isPlayer ? '#c0c0ff' : '#ffc0c0');
+          entry.src.isPlayer ? '#c0c0ff' : '#ffc0c0', entry.tgt);
       } else {
         SFX.hit();
         this._addLog(`${entry.src.name} 💥 ${entry.tgt.name}: ${entry.dmg} dmg`,
-          entry.src.isPlayer ? '#8080ff' : '#ff8080');
+          entry.src.isPlayer ? '#8080ff' : '#ff8080', entry.tgt);
+      }
+      /* XP for the player's strikes — damage dealt, plus a bonus for the kill */
+      if (entry.src.isPlayer && entry.hit && !entry.tgt.isPlayer) {
+        let xp = Math.max(XP_MIN_HIT, entry.dmg);
+        if (!entry.tgt.alive) {
+          xp += XP_KILL_BASE + XP_KILL_PER_LV * entry.tgt.level;
+          if (entry.tgt.key === 'WARLORD') xp += XP_BOSS_BONUS;
+        }
+        this._awardXp(entry.src, xp);
       }
     }
     if (this._combatTimer < 30) return;
@@ -780,7 +818,7 @@ class Game {
       const hadPlayers = this.players.length;
       /* log kills before filtering */
       for (const u of [...this.enemies, ...this.players]) {
-        if (!u.alive) this._addLog(`${u.name} falls!`, '#ffd700');
+        if (!u.alive) this._addLog(`${u.name} falls!`, '#ffd700', u);
       }
       /* handle items from dead units */
       let itemsDropped = false;
@@ -791,7 +829,7 @@ class Game {
           for (const item of e.inventory) {
             if (killer && killer.isPlayer && killer.inventory.length < MAX_INVENTORY) {
               killer.inventory.push({ ...item });
-              this._addLog(`${killer.name} loots ${item.name}!`, '#c0ff80');
+              this._addLog(`${killer.name} loots ${item.name}!`, '#c0ff80', killer);
             } else {
               /* killer's inventory full — leave on ground */
               this.droppedItems.push({ item: { ...item }, x: e.x, y: e.y });
@@ -1160,7 +1198,7 @@ class Game {
       if (d.x === u.x && d.y === u.y && u.inventory.length < MAX_INVENTORY) {
         u.inventory.push(d.item);
         toRemove.push(i);
-        this._addLog(`${u.name} picks up ${d.item.name}`, '#c0ff80');
+        this._addLog(`${u.name} picks up ${d.item.name}`, '#c0ff80', u);
         SFX.select();
       }
     }
@@ -1197,7 +1235,7 @@ class Game {
     /* remove from inventory */
     const idx = u.inventory.indexOf(item);
     if (idx >= 0) u.inventory.splice(idx, 1);
-    this._addLog(`${u.name} uses ${item.name}`, '#80ff80');
+    this._addLog(`${u.name} uses ${item.name}`, '#80ff80', u);
     SFX.hit();
   }
 
@@ -1296,19 +1334,7 @@ class Game {
         } else if (opt.action === 'strengthen') {
           for (const u of this.players) {
             if (!u.alive) continue;
-            const ci = CLASS_INFO[u.key];
-            if (!ci) continue;
-            const gr = ci.gr;
-            u.level++;
-            u.maxHp += Math.max(1, Math.floor(gr.hp / 20));
-            u.str   += Math.floor(gr.str / 20);
-            u.mag   += Math.floor(gr.mag / 20);
-            u.skl   += Math.floor(gr.skl / 20);
-            u.spd   += Math.floor(gr.spd / 20);
-            u.lck   += Math.floor(gr.lck / 20);
-            u.def   += Math.floor(gr.def / 20);
-            u.res   += Math.floor(gr.res / 20);
-            u.hp = u.maxHp;
+            u.levelUp();
           }
         } else if (opt.action === 'fortify') {
           for (const u of this.players) {
@@ -1350,7 +1376,7 @@ class Game {
         floor:      this.floor,
         difficulty: this.difficulty,
         players: this.players.filter(p => p.alive).map(p => ({
-          key: p.key,  name: p.name,  level: p.level,
+          key: p.key,  name: p.name,  level: p.level,  xp: p.xp,
           hp: p.hp,    maxHp: p.maxHp,
           str: p.str,  mag: p.mag,  skl: p.skl,
           spd: p.spd,  lck: p.lck,  def: p.def,  res: p.res,  mov: p.mov,
@@ -1373,6 +1399,7 @@ class Game {
       this.players = (save.players || []).map(pd => {
         const u = new Unit(pd.key, 0, 0, true, pd.level || 1);
         u.name  = pd.name;
+        u.xp    = pd.xp || 0;
         u.hp    = pd.hp;    u.maxHp = pd.maxHp;
         u.str   = pd.str;   u.mag   = pd.mag;   u.skl = pd.skl;
         u.spd   = pd.spd;   u.lck   = pd.lck;   u.def = pd.def;

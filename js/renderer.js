@@ -6,7 +6,7 @@ import {
 } from './constants.js';
 import { forecast, canCounter, inRange } from './combat.js';
 import { isMuted } from './audio.js';
-import { CLASS_INFO, DRAFT_POOL } from './units.js';
+import { CLASS_INFO, DRAFT_POOL, XP_PER_LEVEL } from './units.js';
 
 const FONT = '"Press Start 2P", monospace';
 
@@ -199,6 +199,7 @@ export class Renderer {
     this._units(g);
 
     this._cursor(g);
+    this._battleToasts(g);
     this._sidebar(g);
     if (g.state === S_ACTION_MENU) this._menu(g);
     if (g.state === S_ATK_SELECT) this._atkPrompt();
@@ -206,6 +207,78 @@ export class Renderer {
     if (g.state === S_COMBAT_ANIM && g._enemyCombatPending) this._enemyAtkBanner();
     this._tutBanner(g);
     if (g.state === S_WIN || g.state === S_LOSE) this._overlay(g);
+  }
+
+  /* ═══════════ BATTLE TOASTS ═══════════
+     Play-log entries that happen at a spot on the map (strikes, misses,
+     heals, level-ups…) float over that tile: fade in while the text grows,
+     hold, then fade out — see Game._addLog. */
+  _battleToasts(g) {
+    const toasts = g._toasts;
+    if (!toasts || !toasts.length) return;
+    const c = this.cx;
+    const mapW = COLS * TILE;
+    const LIFE = 1800;            // ms
+    const START = 0.75, END = 1.35; // text size multiplier at birth / at death
+    const now = performance.now();
+
+    for (let i = toasts.length - 1; i >= 0; i--) {
+      if (now - toasts[i].born >= LIFE) toasts.splice(i, 1);
+    }
+
+    /* the map is drawn at a fixed size and then shrunk to fit a phone, so
+       bump the text with the info pane's portrait scale to keep it legible */
+    const base = 16 * Math.max(1, this._sideRect.scale * 0.6);
+    const maxW = mapW * 0.8;
+    const placed = [];
+
+    c.save();
+    c.textAlign = 'center';
+    c.lineJoin = 'round';
+    for (const t of toasts) {          // oldest first, so newer text stacks above
+      const age = (now - t.born) / LIFE;
+
+      /* wrap once at the largest size so lines don't reflow while it grows */
+      if (t._wrapBase !== base) {
+        c.font = `${base * END}px ${FONT}`;
+        const lines = [];
+        let line = '';
+        for (const word of t.text.split(' ')) {
+          const next = line ? `${line} ${word}` : word;
+          if (line && c.measureText(next).width > maxW) { lines.push(line); line = word; }
+          else line = next;
+        }
+        if (line) lines.push(line);
+        t._lines = lines.slice(0, 4);
+        t._wrapBase = base;
+      }
+
+      const fs = base * (START + (END - START) * age);
+      const lineH = fs * 1.35;
+      const alpha = age < 0.18 ? age / 0.18 : age > 0.7 ? (1 - age) / 0.3 : 1;
+      c.font = `${fs}px ${FONT}`;
+      const w = Math.max(...t._lines.map(l => c.measureText(l).width));
+      const h = t._lines.length * lineH;
+
+      const cx = Math.min(mapW - w / 2 - 6, Math.max(w / 2 + 6, t.tx * TILE + TILE / 2));
+      let top = t.ty * TILE - 6 - h - 20 * (base / 16) * age;
+      const rect = () => ({ x: cx - w / 2, y: top, w, h });
+      const hits = r => placed.some(p => r.x < p.x + p.w && r.x + r.w > p.x && r.y < p.y + p.h && r.y + r.h > p.y);
+      for (let n = 0; n < 12 && hits(rect()); n++) top -= lineH * 0.5;
+      top = Math.max(4, top);
+      placed.push(rect());
+
+      c.globalAlpha = Math.max(0, Math.min(1, alpha));
+      c.lineWidth = Math.max(3, fs * 0.3);
+      c.strokeStyle = 'rgba(0,0,0,0.85)';
+      c.fillStyle = t.color;
+      t._lines.forEach((l, i) => {
+        const by = top + fs + i * lineH;
+        c.strokeText(l, cx, by);
+        c.fillText(l, cx, by);
+      });
+    }
+    c.restore();
   }
 
   /* ═══════════ TITLE ═══════════ */
@@ -683,7 +756,7 @@ export class Renderer {
     /* top banner — taller than a single line needs, so the log entry
        text below (the part that's hardest to read once the canvas is
        letterboxed down to phone width) can run at a legible size */
-    const bannerH = 54;
+    const bannerH = 70;
     c.fillStyle = 'rgba(5,10,40,0.90)';
     c.fillRect(0, 0, mapW, bannerH);
     c.strokeStyle = 'rgba(80,120,255,0.75)';
@@ -712,18 +785,20 @@ export class Renderer {
     /* ── centre label ── */
     c.textAlign = 'center';
     c.fillStyle = '#8090ff';
-    c.font = `9px ${FONT}`;
-    c.fillText(`PLAY HISTORY \u00B7 Turn ${snap.turn}`, mapW / 2, 20);
+    c.font = `12px ${FONT}`;
+    c.fillText(`PLAY HISTORY \u00B7 Turn ${snap.turn}`, mapW / 2, 24);
     const entryText = g._historyView.entry ? g._historyView.entry.text : '';
     c.fillStyle = g._historyView.entry ? g._historyView.entry.color || '#a0a0c0' : '#505880';
-    /* the space between the nav buttons — shrink a step if a long entry
-       would otherwise run under them */
+    /* the space between the nav buttons — shrink as needed so a long
+       entry never runs under them */
     const entrySafeW = newerX - (olderX + btnW) - 20;
-    let entryFont = 11;
+    let entryFont = 15;
     c.font = `${entryFont}px ${FONT}`;
-    if (c.measureText(entryText).width > entrySafeW) entryFont = 8;
-    c.font = `${entryFont}px ${FONT}`;
-    c.fillText(entryText, mapW / 2, 42);
+    while (entryFont > 9 && c.measureText(entryText).width > entrySafeW) {
+      entryFont--;
+      c.font = `${entryFont}px ${FONT}`;
+    }
+    c.fillText(entryText, mapW / 2, 54);
   }
 
   /* ═══════════ UNITS ═══════════ */
@@ -997,7 +1072,8 @@ export class Renderer {
     const gridRows = Math.ceil(stats.length / cols);
     const rowH = 18;
     const gridH = gridRows * rowH + 8;
-    const panelH = 60 + gridH + 60 + (invCount > 0 ? 18 + invCount * 16 : 0);
+    const xpRowH = u.isPlayer ? 26 : 0;
+    const panelH = 60 + gridH + 60 + xpRowH + (invCount > 0 ? 18 + invCount * 16 : 0);
 
     c.fillStyle = u.isPlayer ? '#1a1a50' : '#501a1a';
     c.fillRect(x-4, y, w+8, panelH);
@@ -1018,6 +1094,17 @@ export class Renderer {
     c.fillRect(x, y, Math.floor(w * pct), barH);
     c.fillStyle = '#fff'; c.font = `${PANE_FONT}px monospace`;
     c.fillText(`${u.hp}/${u.maxHp}`, x+2, y+barH-1); y += 20;
+
+    /* XP bar — player units only */
+    if (u.isPlayer) {
+      const xpPct = Math.min(1, u.xp / XP_PER_LEVEL);
+      c.fillStyle = '#101030'; c.fillRect(x, y - 6, w, 6);
+      c.fillStyle = '#40b0e0'; c.fillRect(x, y - 6, Math.floor(w * xpPct), 6);
+      c.fillStyle = '#6080b0'; c.font = `${PANE_FONT - 2}px ${FONT}`; c.textAlign = 'right';
+      c.fillText(`XP ${u.xp}/${XP_PER_LEVEL}`, x + w, y + 8);
+      c.textAlign = 'left';
+      y += xpRowH;
+    }
 
     /* stats grid */
     c.font = `${PANE_FONT}px ${FONT}`;

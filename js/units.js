@@ -72,6 +72,8 @@ const CLASSES = {
 
 let _id = 0;
 
+export const XP_PER_LEVEL = 100;
+
 export class Unit {
   constructor(key, x, y, isPlayer, level = 1) {
     const c = CLASSES[key];
@@ -85,6 +87,7 @@ export class Unit {
     this.isPlayer = isPlayer;
     this.x = x;  this.y = y;
     this.level = level;
+    this.xp = 0;
     this.moved = false;  this.acted = false;  this.alive = true;
     this.inventory = [];
     this.canSteal = !!c.canSteal;
@@ -110,6 +113,33 @@ export class Unit {
   defVs(magic) { return magic ? this.res : this.def; }
 
   takeDmg(d) { this.hp = Math.max(0, this.hp - d); if (!this.hp) this.alive = false; }
+
+  /* one level: class-growth stat bump (same 1/20 scale as the constructor), then a full heal */
+  levelUp() {
+    const gr = CLASSES[this.key].gr;
+    this.level++;
+    this.maxHp += Math.max(1, Math.floor(gr.hp / 20));
+    this.str   += Math.floor(gr.str / 20);
+    this.mag   += Math.floor(gr.mag / 20);
+    this.skl   += Math.floor(gr.skl / 20);
+    this.spd   += Math.floor(gr.spd / 20);
+    this.lck   += Math.floor(gr.lck / 20);
+    this.def   += Math.floor(gr.def / 20);
+    this.res   += Math.floor(gr.res / 20);
+    this.hp = this.maxHp;
+  }
+
+  /* returns how many levels were gained (a big kill bonus can carry over more than one) */
+  gainXp(n) {
+    this.xp += n;
+    let gained = 0;
+    while (this.xp >= XP_PER_LEVEL) {
+      this.xp -= XP_PER_LEVEL;
+      this.levelUp();
+      gained++;
+    }
+    return gained;
+  }
 }
 
 /* ── Factory helpers ── */
