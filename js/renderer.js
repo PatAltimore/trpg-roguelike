@@ -218,12 +218,14 @@ export class Renderer {
     if (!toasts || !toasts.length) return;
     const c = this.cx;
     const mapW = COLS * TILE;
-    const LIFE = 1800;            // ms
-    const START = 0.75, END = 1.35; // text size multiplier at birth / at death
+    /* timeline (ms): fade in while growing, sit fully expanded long enough to
+       read, then fade out */
+    const GROW = 500, HOLD = 5000, FADE = 700;
+    const START = 0.75, END = 1.35; // text size multiplier at birth / fully grown
     const now = performance.now();
 
     for (let i = toasts.length - 1; i >= 0; i--) {
-      if (now - toasts[i].born >= LIFE) toasts.splice(i, 1);
+      if (now - toasts[i].born >= GROW + HOLD + FADE) toasts.splice(i, 1);
     }
 
     /* the map is drawn at a fixed size and then shrunk to fit a phone, so
@@ -236,7 +238,8 @@ export class Renderer {
     c.textAlign = 'center';
     c.lineJoin = 'round';
     for (const t of toasts) {          // oldest first, so newer text stacks above
-      const age = (now - t.born) / LIFE;
+      const elapsed = now - t.born;
+      const grow = Math.min(1, elapsed / GROW);
 
       /* wrap once at the largest size so lines don't reflow while it grows */
       if (t._wrapBase !== base) {
@@ -253,15 +256,17 @@ export class Renderer {
         t._wrapBase = base;
       }
 
-      const fs = base * (START + (END - START) * age);
+      const fs = base * (START + (END - START) * grow);
       const lineH = fs * 1.35;
-      const alpha = age < 0.18 ? age / 0.18 : age > 0.7 ? (1 - age) / 0.3 : 1;
+      const alpha = elapsed < GROW ? grow
+                  : elapsed > GROW + HOLD ? 1 - (elapsed - GROW - HOLD) / FADE
+                  : 1;
       c.font = `${fs}px ${FONT}`;
       const w = Math.max(...t._lines.map(l => c.measureText(l).width));
       const h = t._lines.length * lineH;
 
       const cx = Math.min(mapW - w / 2 - 6, Math.max(w / 2 + 6, t.tx * TILE + TILE / 2));
-      let top = t.ty * TILE - 6 - h - 20 * (base / 16) * age;
+      let top = t.ty * TILE - 6 - h - 20 * (base / 16) * grow;
       const rect = () => ({ x: cx - w / 2, y: top, w, h });
       const hits = r => placed.some(p => r.x < p.x + p.w && r.x + r.w > p.x && r.y < p.y + p.h && r.y + r.h > p.y);
       for (let n = 0; n < 12 && hits(rect()); n++) top -= lineH * 0.5;
