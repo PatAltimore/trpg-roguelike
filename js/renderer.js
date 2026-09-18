@@ -680,16 +680,19 @@ export class Renderer {
     /* dim the entire map area */
     c.fillStyle = 'rgba(0,0,30,0.38)';
     c.fillRect(0, 0, mapW, mapH);
-    /* top banner */
+    /* top banner — taller than a single line needs, so the log entry
+       text below (the part that's hardest to read once the canvas is
+       letterboxed down to phone width) can run at a legible size */
+    const bannerH = 54;
     c.fillStyle = 'rgba(5,10,40,0.90)';
-    c.fillRect(0, 0, mapW, 42);
+    c.fillRect(0, 0, mapW, bannerH);
     c.strokeStyle = 'rgba(80,120,255,0.75)';
     c.lineWidth = 1;
-    c.strokeRect(0, 0, mapW, 42);
+    c.strokeRect(0, 0, mapW, bannerH);
     const snap = g._historyView.snap;
 
     /* ── OLDER / NEWER navigation buttons ── */
-    const btnW = 84, btnH = 28, btnY = 7;
+    const btnW = 84, btnH = 28, btnY = (bannerH - btnH) / 2;
     const olderX = 8, newerX = mapW - btnW - 8;
 
     /* OLDER */
@@ -710,11 +713,17 @@ export class Renderer {
     c.textAlign = 'center';
     c.fillStyle = '#8090ff';
     c.font = `9px ${FONT}`;
-    c.fillText(`PLAY HISTORY  \u00B7  Turn ${snap.turn}`, mapW / 2, 17);
+    c.fillText(`PLAY HISTORY \u00B7 Turn ${snap.turn}`, mapW / 2, 20);
     const entryText = g._historyView.entry ? g._historyView.entry.text : '';
     c.fillStyle = g._historyView.entry ? g._historyView.entry.color || '#a0a0c0' : '#505880';
-    c.font = `6px ${FONT}`;
-    c.fillText(entryText, mapW / 2, 33);
+    /* the space between the nav buttons — shrink a step if a long entry
+       would otherwise run under them */
+    const entrySafeW = newerX - (olderX + btnW) - 20;
+    let entryFont = 11;
+    c.font = `${entryFont}px ${FONT}`;
+    if (c.measureText(entryText).width > entrySafeW) entryFont = 8;
+    c.font = `${entryFont}px ${FONT}`;
+    c.fillText(entryText, mapW / 2, 42);
   }
 
   /* ═══════════ UNITS ═══════════ */
