@@ -21,6 +21,10 @@ const XP_BOSS_BONUS  = 50;
 const XP_HEAL        = 10;
 const XP_STEAL       = 15;
 
+/* unit names inside log / battle text are always coloured by side */
+const NAME_PLAYER = '#60e060';
+const NAME_ENEMY  = '#ff6060';
+
 /* ═══════════ Tutorial messages ═══════════
    Each fires once, triggered by game events.
    Teaches through play — prompts appear at the moment
@@ -135,14 +139,38 @@ class Game {
 
   /* ═══════════ PLAY LOG & REWIND ═══════════ */
 
+  /* Split log text into runs [{t, c?}] — unit names get a side colour
+     (green player / red enemy), everything else has no `c` and takes the
+     entry's own colour when drawn. */
+  _nameRuns(text) {
+    const side = new Map();
+    for (const u of [...this.players, ...this.enemies, ...this._allEnemies]) side.set(u.name, u.isPlayer);
+    if (!side.size) return [{ t: text }];
+    const pattern = [...side.keys()]
+      .sort((a, b) => b.length - a.length)
+      .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|');
+    const re = new RegExp(pattern, 'g');
+    const runs = [];
+    let last = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > last) runs.push({ t: text.slice(last, m.index) });
+      runs.push({ t: m[0], c: side.get(m[0]) ? NAME_PLAYER : NAME_ENEMY });
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) runs.push({ t: text.slice(last) });
+    return runs;
+  }
+
   /* `at` — a unit or {x, y} tile; when given, the entry also floats over that
      tile as battle text (see Renderer._battleToasts). */
   _addLog(text, color = '#a0a0c0', at = null) {
+    const runs = this._nameRuns(text);
     /* capture the exact playfield state before this entry is added so
        history view can show precisely what the board looked like at this moment */
-    this.playLog.push({ text, color, snap: this._captureState() });
+    this.playLog.push({ text, runs, color, snap: this._captureState() });
     if (this.playLog.length > 120) this.playLog.shift();
-    if (at) this._toasts.push({ text, color, tx: at.x, ty: at.y, born: performance.now() });
+    if (at) this._toasts.push({ text, runs, color, tx: at.x, ty: at.y, born: performance.now() });
   }
 
   /* Give a player unit XP; a level-up fully restores its HP (see Unit.levelUp). */

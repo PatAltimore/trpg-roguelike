@@ -230,7 +230,7 @@ export class Renderer {
 
     /* the map is drawn at a fixed size and then shrunk to fit a phone, so
        bump the text with the info pane's portrait scale to keep it legible */
-    const base = 16 * Math.max(1, this._sideRect.scale * 0.6);
+    const base = 16 * Math.max(1, this._sideRect.scale * 0.4);
     const maxW = mapW * 0.8;
     const placed = [];
 
@@ -244,15 +244,19 @@ export class Renderer {
       /* wrap once at the largest size so lines don't reflow while it grows */
       if (t._wrapBase !== base) {
         c.font = `${base * END}px ${FONT}`;
+        /* lines are char ranges into the text, so name colours survive wrapping */
         const lines = [];
-        let line = '';
+        let start = 0, pos = 0;
         for (const word of t.text.split(' ')) {
-          const next = line ? `${line} ${word}` : word;
-          if (line && c.measureText(next).width > maxW) { lines.push(line); line = word; }
-          else line = next;
+          const end = pos + word.length;
+          if (end > start && pos > start && c.measureText(t.text.slice(start, end)).width > maxW) {
+            lines.push({ s: start, e: pos - 1 });
+            start = pos;
+          }
+          pos = end + 1;
         }
-        if (line) lines.push(line);
-        t._lines = lines.slice(0, 4);
+        lines.push({ s: start, e: t.text.length });
+        t._lines = lines.slice(0, 4).map(l => this._sliceRuns(t.runs, l.s, l.e));
         t._wrapBase = base;
       }
 
@@ -262,7 +266,7 @@ export class Renderer {
                   : elapsed > GROW + HOLD ? 1 - (elapsed - GROW - HOLD) / FADE
                   : 1;
       c.font = `${fs}px ${FONT}`;
-      const w = Math.max(...t._lines.map(l => c.measureText(l).width));
+      const w = Math.max(...t._lines.map(l => this._runsWidth(l)));
       const h = t._lines.length * lineH;
 
       const cx = Math.min(mapW - w / 2 - 6, Math.max(w / 2 + 6, t.tx * TILE + TILE / 2));
@@ -276,14 +280,43 @@ export class Renderer {
       c.globalAlpha = Math.max(0, Math.min(1, alpha));
       c.lineWidth = Math.max(3, fs * 0.3);
       c.strokeStyle = 'rgba(0,0,0,0.85)';
-      c.fillStyle = t.color;
-      t._lines.forEach((l, i) => {
-        const by = top + fs + i * lineH;
-        c.strokeText(l, cx, by);
-        c.fillText(l, cx, by);
-      });
+      t._lines.forEach((runs, i) => this._fillRuns(runs, cx, top + fs + i * lineH, 'center', t.color, true));
     }
     c.restore();
+  }
+
+  /* ── coloured text runs [{t, c?}] — unit names carry their own colour, the
+     rest falls back to the entry colour (see Game._nameRuns) ── */
+  _runsWidth(runs) {
+    return runs.reduce((sum, r) => sum + this.cx.measureText(r.t).width, 0);
+  }
+
+  /* the part of `runs` covering chars [s, e) */
+  _sliceRuns(runs, s, e) {
+    const out = [];
+    let pos = 0;
+    for (const r of runs) {
+      const a = Math.max(s, pos), b = Math.min(e, pos + r.t.length);
+      if (b > a) out.push({ t: r.t.slice(a - pos, b - pos), c: r.c });
+      pos += r.t.length;
+    }
+    return out;
+  }
+
+  /* draw one line of runs at baseline y; font must already be set */
+  _fillRuns(runs, x, y, align, defColor, outline = false) {
+    const c = this.cx;
+    const prev = c.textAlign;
+    const total = this._runsWidth(runs);
+    let px = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+    c.textAlign = 'left';
+    for (const r of runs) {
+      if (outline) c.strokeText(r.t, px, y);
+      c.fillStyle = r.c || defColor;
+      c.fillText(r.t, px, y);
+      px += c.measureText(r.t).width;
+    }
+    c.textAlign = prev;
   }
 
   /* ═══════════ TITLE ═══════════ */
@@ -803,7 +836,8 @@ export class Renderer {
       entryFont--;
       c.font = `${entryFont}px ${FONT}`;
     }
-    c.fillText(entryText, mapW / 2, 54);
+    const entryRuns = g._historyView.entry ? g._historyView.entry.runs : null;
+    this._fillRuns(entryRuns || [{ t: entryText }], mapW / 2, 54, 'center', c.fillStyle);
   }
 
   /* ═══════════ UNITS ═══════════ */
@@ -1336,13 +1370,11 @@ export class Renderer {
 
       /* entry text — same pixel font as the rest of the game, not the
          proportional sans-serif this used to borrow for density */
-      let txt = entry.text;
+      let runs = entry.runs || [{ t: entry.text }];
       const maxChars = Math.floor((w - 16) / entryFont); // Press Start 2P is ~1em per char — measured, not a sans-serif estimate
-      if (txt.length > maxChars) txt = txt.slice(0, maxChars - 1) + '…';
-      c.fillStyle = isSelected ? '#c0d0ff' : entry.color;
+      if (entry.text.length > maxChars) runs = [...this._sliceRuns(runs, 0, maxChars - 1), { t: '…' }];
       c.font = `${entryFont}px ${FONT}`;
-      c.textAlign = 'left';
-      c.fillText(txt, x + 1, ey);
+      this._fillRuns(runs, x + 1, ey, 'left', isSelected ? '#c0d0ff' : entry.color);
 
       /* selected entry gets a small marker to remind the player this is the restore point */
       if (isSelected) {
