@@ -21,6 +21,12 @@ const XP_BOSS_BONUS  = 50;
 const XP_HEAL        = 10;
 const XP_STEAL       = 15;
 
+/* Battle pacing (ms). Each automatic action waits after the one before it so
+   its log line and battle text can be read before the next thing happens. */
+const ACTION_DELAY = 1000;  // after a strike, and after a kill / loot message
+const FINISH_DELAY = 500;   // after the last strike of a player's own attack — control returns right after
+const MOVE_DELAY   = 600;   // an enemy walking somewhere: nothing new to read, but you want to see it move
+
 /* unit names inside log / battle text are always coloured by side */
 const NAME_PLAYER = '#60e060';
 const NAME_ENEMY  = '#ff6060';
@@ -89,7 +95,7 @@ class Game {
     /* enemy turn queue */
     this._eActions = null;
     this._eIdx     = 0;
-    this._eTimer   = 0;
+    this._actionAt = 0;      // performance.now() before which the next automatic action must wait
 
     /* dropped items on map */
     this.droppedItems = [];  // [{item, x, y}]
@@ -110,7 +116,6 @@ class Game {
     this._combatLog = [];
     this._combatIdx = 0;
     this._enemyCombatPending = false;
-    this._combatTimer = 0;
     this._combatAtk = null;
     this._combatDef = null;
     this._healMode = false;
@@ -235,9 +240,9 @@ class Game {
     /* reset any in-flight state */
     this.phase = 'player';
     this.state = S_IDLE;
-    this._eActions = null; this._eIdx = 0; this._eTimer = 0;
+    this._eActions = null; this._eIdx = 0; this._actionAt = 0;
     this._enemyCombatPending = false;
-    this._combatLog = []; this._combatIdx = 0; this._combatTimer = 0;
+    this._combatLog = []; this._combatIdx = 0;
     this._historyView = null;
     this._logScroll   = 0;
     this._latestSnap = this.snapshots.length ? this.snapshots[this.snapshots.length - 1] : null;
@@ -797,7 +802,6 @@ class Game {
     const dt = this.map.at(def.x, def.y);
     this._combatLog = resolve(atk, def, at, dt);
     this._combatIdx = 0;
-    this._combatTimer = 0;
     this._combatAtk = atk;   // track attacker for visual feedback
     this._combatDef = def;   // track defender for visual feedback
     this.sel = atk;           // selection ring on attacker
@@ -809,10 +813,12 @@ class Game {
   }
 
   _stepCombatAnim() {
-    this._combatTimer++;
-    /* apply damage + play sound + log at the start of each strike */
-    if (this._combatTimer === 1 && this._combatIdx < this._combatLog.length) {
-      const entry = this._combatLog[this._combatIdx];
+    const now = performance.now();
+    if (now < this._actionAt) return;   // pause so the last log line can be read
+
+    /* one strike per step: apply damage + play sound + log it, then wait */
+    if (this._combatIdx < this._combatLog.length) {
+      const entry = this._combatLog[this._combatIdx++];
       if (entry.dmg > 0) entry.tgt.takeDmg(entry.dmg);
       if (!entry.hit) {
         SFX.miss();
@@ -836,68 +842,71 @@ class Game {
         }
         this._awardXp(entry.src, xp);
       }
+      const last = this._combatIdx >= this._combatLog.length;
+      this._actionAt = now + (last && !this._enemyCombatPending ? FINISH_DELAY : ACTION_DELAY);
+      return;
     }
-    if (this._combatTimer < 30) return;
-    this._combatTimer = 0;
-    this._combatIdx++;
-    if (this._combatIdx >= this._combatLog.length) {
-      if (this.sel) this.sel.acted = true;
-      const hadEnemies = this.enemies.length;
-      const hadPlayers = this.players.length;
-      /* log kills before filtering */
-      for (const u of [...this.enemies, ...this.players]) {
-        if (!u.alive) this._addLog(`${u.name} falls!`, '#ffd700', u);
-      }
-      /* handle items from dead units */
-      let itemsDropped = false;
-      /* dead enemies — auto-loot to the killer if they have inventory space */
-      const killer = this._combatAtk;
-      for (const e of this.enemies) {
-        if (!e.alive && e.inventory.length > 0) {
-          for (const item of e.inventory) {
-            if (killer && killer.isPlayer && killer.inventory.length < MAX_INVENTORY) {
-              killer.inventory.push({ ...item });
-              this._addLog(`${killer.name} loots ${item.name}!`, '#c0ff80', killer);
-            } else {
-              /* killer's inventory full — leave on ground */
-              this.droppedItems.push({ item: { ...item }, x: e.x, y: e.y });
-              itemsDropped = true;
-            }
-          }
-          e.inventory = [];
-        }
-      }
-      /* dead players — always drop items to the field */
-      for (const p of this.players) {
-        if (!p.alive && p.inventory.length > 0) {
-          for (const item of p.inventory) {
-            this.droppedItems.push({ item: { ...item }, x: p.x, y: p.y });
-          }
-          p.inventory = [];
-          itemsDropped = true;
-        }
-      }
-      this.enemies = this.enemies.filter(e => e.alive);
-      this.players = this.players.filter(p => p.alive);
-      /* sound for kills */
-      if (this.enemies.length < hadEnemies || this.players.length < hadPlayers) SFX.kill();
-      /* tutorial tips */
-      if (this.tut && this.enemies.length < hadEnemies) this._tutShow('first_kill');
-      if (this.tut && itemsDropped) this._tutShow('item_drop');
 
-      if (this._enemyCombatPending) {
-        /* resume enemy turn after enemy-initiated combat */
-        this._enemyCombatPending = false;
-        this.state = S_ENEMY_TURN;
-        this._eTimer = 0;
-        this._deselect();
-        this._checkEnd();
-      } else {
-        /* player-initiated combat — return to idle */
-        this.state = S_IDLE;
-        this._deselect();
-        this._checkEnd();
+    /* every strike has landed — settle the outcome */
+    if (this.sel) this.sel.acted = true;
+    const hadEnemies = this.enemies.length;
+    const hadPlayers = this.players.length;
+    let posted = false;   // any kill / loot lines that need reading time
+    /* log kills before filtering */
+    for (const u of [...this.enemies, ...this.players]) {
+      if (!u.alive) { this._addLog(`${u.name} falls!`, '#ffd700', u); posted = true; }
+    }
+    /* handle items from dead units */
+    let itemsDropped = false;
+    /* dead enemies — auto-loot to the killer if they have inventory space */
+    const killer = this._combatAtk;
+    for (const e of this.enemies) {
+      if (!e.alive && e.inventory.length > 0) {
+        for (const item of e.inventory) {
+          if (killer && killer.isPlayer && killer.inventory.length < MAX_INVENTORY) {
+            killer.inventory.push({ ...item });
+            this._addLog(`${killer.name} loots ${item.name}!`, '#c0ff80', killer);
+            posted = true;
+          } else {
+            /* killer's inventory full — leave on ground */
+            this.droppedItems.push({ item: { ...item }, x: e.x, y: e.y });
+            itemsDropped = true;
+          }
+        }
+        e.inventory = [];
       }
+    }
+    /* dead players — always drop items to the field */
+    for (const p of this.players) {
+      if (!p.alive && p.inventory.length > 0) {
+        for (const item of p.inventory) {
+          this.droppedItems.push({ item: { ...item }, x: p.x, y: p.y });
+        }
+        p.inventory = [];
+        itemsDropped = true;
+      }
+    }
+    this.enemies = this.enemies.filter(e => e.alive);
+    this.players = this.players.filter(p => p.alive);
+    /* sound for kills */
+    if (this.enemies.length < hadEnemies || this.players.length < hadPlayers) SFX.kill();
+    /* tutorial tips */
+    if (this.tut && this.enemies.length < hadEnemies) this._tutShow('first_kill');
+    if (this.tut && itemsDropped) this._tutShow('item_drop');
+
+    if (this._enemyCombatPending) {
+      /* resume enemy turn after enemy-initiated combat */
+      this._enemyCombatPending = false;
+      this.state = S_ENEMY_TURN;
+      /* the last strike already had its full pause; kill/loot lines get their own */
+      if (posted) this._actionAt = now + ACTION_DELAY;
+      this._deselect();
+      this._checkEnd();
+    } else {
+      /* player-initiated combat — return to idle */
+      this.state = S_IDLE;
+      this._deselect();
+      this._checkEnd();
     }
   }
 
@@ -911,7 +920,7 @@ class Game {
     this.state = S_ENEMY_TURN;
     this._eActions = null;
     this._eIdx = 0;
-    this._eTimer = 0;
+    this._actionAt = performance.now() + ACTION_DELAY;   // let "Enemy phase" register first
     this._tutShow('enemy_go');
     setTimeout(() => SFX.enemyPhase(), 300);
   }
@@ -919,16 +928,16 @@ class Game {
   _stepEnemy() {
     if (!this._eActions) {
       this._eActions = planEnemyTurn(this.enemies, this.players, this.map);
-      this._eIdx = 0; this._eTimer = 0;
+      this._eIdx = 0;
     }
-    this._eTimer++;
-    if (this._eTimer < 40) return;
-    this._eTimer = 0;
+    const now = performance.now();
+    if (now < this._actionAt) return;
 
     if (this._eIdx >= this._eActions.length) { this._startPlayerTurn(); return; }
 
     const a = this._eActions[this._eIdx++];
     if (!a.unit.alive) return;
+    const from = { x: a.unit.x, y: a.unit.y };
 
     if (a.mx !== undefined) {
       const isOccupied = (x, y) =>
@@ -956,6 +965,10 @@ class Game {
         }
       }
     }
+
+    /* an enemy that stays put costs no time; one that walks gets a beat so you
+       can see it move, and its attack (if any) starts after that beat */
+    if (a.unit.x !== from.x || a.unit.y !== from.y) this._actionAt = now + MOVE_DELAY;
 
     if ((a.type === 'attack' || a.type === 'move_attack') && a.target && a.target.alive) {
       if (inRange(a.unit, a.target.x, a.target.y)) {

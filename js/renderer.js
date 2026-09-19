@@ -1735,22 +1735,6 @@ export class Renderer {
     const tr = g.trans;
     if (!tr) return;
 
-    /* draw road tiles along each walker's path */
-    const drawn = new Set();
-    for (const w of tr.walkers) {
-      for (const pt of w.path) {
-        if (pt.x >= 0 && pt.x < COLS && pt.y >= 0 && pt.y < ROWS) {
-          const key = pt.x + ',' + pt.y;
-          if (drawn.has(key)) continue;
-          drawn.add(key);
-          c.fillStyle = '#c8a870';
-          c.fillRect(pt.x * TILE, pt.y * TILE, TILE, TILE);
-          c.fillStyle = '#b89860';
-          c.fillRect(pt.x * TILE + 16, pt.y * TILE + 2, 8, TILE - 4);
-        }
-      }
-    }
-
     /* draw walker units (including off-screen partial visibility at edges) */
     const mapH = ROWS * TILE;
     c.save();
