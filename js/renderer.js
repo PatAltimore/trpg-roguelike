@@ -1,6 +1,7 @@
 import {
   TILE, COLS, ROWS, SIDEBAR_W, CANVAS_W, CANVAS_H, C,
   T_PLAIN, T_FOREST, T_MOUNTAIN, T_WATER, T_WALL, T_ROAD, T_FORT,
+  T_HILL, T_SWAMP, T_FORD, T_BRIDGE,
   S_TITLE, S_ACTION_MENU, S_WIN, S_LOSE, S_ATK_SELECT, S_COMBAT_ANIM,
   S_TRANS_OUT, S_TRANS_IN, S_VICTORY, S_DRAFT, S_BONUS, FINAL_FLOOR,
 } from './constants.js';
@@ -707,6 +708,33 @@ export class Renderer {
     } else if (t === T_ROAD) {
       c.fillStyle = '#b89860';
       c.fillRect(x+10, y, 4, T); c.fillRect(x+T-14, y, 4, T);
+    } else if (t === T_HILL) {
+      /* stacked mounds — grassy, so it reads as high ground and not a mountain */
+      c.fillStyle = '#7a7638';
+      c.beginPath(); c.moveTo(x+4, y+T-6); c.quadraticCurveTo(x+T/2, y+4, x+T-4, y+T-6); c.closePath(); c.fill();
+      c.fillStyle = '#a49f58';
+      c.beginPath(); c.moveTo(x+12, y+T-6); c.quadraticCurveTo(x+T/2, y+14, x+T-12, y+T-6); c.closePath(); c.fill();
+      c.fillStyle = '#6a6630'; c.fillRect(x+8, y+T-8, 3, 2); c.fillRect(x+T-13, y+T-9, 3, 2);
+    } else if (t === T_SWAMP) {
+      /* murky puddles and reeds */
+      c.fillStyle = '#2c4636';
+      c.fillRect(x+6, y+12, 18, 8); c.fillRect(x+T-22, y+T-20, 16, 8);
+      c.fillStyle = '#5f7a55';
+      for (const rx of [10, 26, T-14]) { c.fillRect(x+rx, y+T-18, 2, 10); c.fillRect(x+rx-2, y+T-20, 6, 3); }
+    } else if (t === T_FORD) {
+      /* shallow water with stepping stones */
+      const off = (this.t >> 5) % 4;
+      c.fillStyle = '#5aa0c8';
+      for (let i = 0; i < 2; i++) c.fillRect(x + (i*24 + off*4) % (T-10), y+12+i*22, 10, 2);
+      c.fillStyle = '#8a9aa0';
+      c.fillRect(x+12, y+T-22, 8, 6); c.fillRect(x+T-22, y+16, 8, 6); c.fillRect(x+T/2-4, y+T/2, 8, 6);
+    } else if (t === T_BRIDGE) {
+      /* planks over the water, with rails */
+      c.fillStyle = '#2060b0'; c.fillRect(x, y, T, T);
+      c.fillStyle = '#9a7a44'; c.fillRect(x+6, y, T-12, T);
+      c.fillStyle = '#7a5a30';
+      for (let py = 4; py < T; py += 10) c.fillRect(x+6, y+py, T-12, 2);
+      c.fillStyle = '#5a3a1a'; c.fillRect(x+4, y, 3, T); c.fillRect(x+T-7, y, 3, T);
     } else {
       /* plain – grass detail */
       c.fillStyle = '#4a7a10';
@@ -1179,7 +1207,8 @@ export class Renderer {
     c.fillStyle = C.GOLD; c.font = `${PANE_FONT}px ${FONT}`; c.textAlign = 'left';
     c.fillText(t.name, x, y); y += 16;
     c.fillStyle = C.TXT; c.font = `${PANE_FONT}px ${FONT}`;
-    c.fillText(`DEF +${t.def}  AVO +${t.avo}`, x, y); y += 14;
+    const signed = n => (n < 0 ? `${n}` : `+${n}`);
+    c.fillText(`DEF ${signed(t.def)}  AVO ${signed(t.avo)}`, x, y); y += 14;
     c.fillText(`Move: ${t.cost >= 99 ? '--' : t.cost}`, x, y); y += 24;
     return y;
   }

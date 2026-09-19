@@ -20,6 +20,14 @@ export const T_WATER    = { id: 3, name: 'Water',    color: '#1a4a8a', cost: 99,
 export const T_WALL     = { id: 4, name: 'Wall',     color: '#303038', cost: 99, def: 0, avo: 0  };
 export const T_ROAD     = { id: 5, name: 'Road',     color: '#c8a870', cost: 1,  def: 0, avo: 0  };
 export const T_FORT     = { id: 6, name: 'Fort',     color: '#8a6a30', cost: 1,  def: 2, avo: 20, heal: 10 };
+/* high ground: the best cover you can walk onto, but costly to climb */
+export const T_HILL     = { id: 7, name: 'Hill',     color: '#8f8a45', cost: 2,  def: 2, avo: 5  };
+/* slows everyone and makes units easy to hit — a place to avoid fighting in */
+export const T_SWAMP    = { id: 8, name: 'Swamp',    color: '#3f5a45', cost: 3,  def: 0, avo: -10 };
+/* shallow river crossing: passable anywhere it appears, but slow and exposed */
+export const T_FORD     = { id: 9, name: 'Ford',     color: '#3d7fa8', cost: 2,  def: 0, avo: -10 };
+/* fast but one tile wide — the deliberate chokepoint */
+export const T_BRIDGE   = { id: 10, name: 'Bridge',  color: '#8a6a3a', cost: 1,  def: 0, avo: 0  };
 
 /* ── Weapons ── */
 export const W_SWORD   = { name: 'Sword',   mt: 5, hit: 90, rng: [1,1], magic: false, tri: 'sword' };

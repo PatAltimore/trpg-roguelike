@@ -1,4 +1,4 @@
-import { reachable } from './map.js';
+import { reachable, pathDistances } from './map.js';
 import { inRange } from './combat.js';
 
 /**
@@ -11,6 +11,10 @@ import { inRange } from './combat.js';
  *
  * Boss units and units that start near players are aggressive.
  * Most other units are guards — like classic Fire Emblem.
+ *
+ * "Nearest" and "closer" mean walking distance, not straight-line, so
+ * enemies path around rivers and mountain ridges instead of pressing against
+ * them. Ties go to the tile with better cover.
  */
 export function planEnemyTurn(enemies, players, map) {
   const all = [...enemies, ...players];
@@ -23,29 +27,38 @@ export function planEnemyTurn(enemies, players, map) {
   }
 
   const alive = players.filter(p => p.alive);
+  const manhattan = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  /* walking cost from each player to every tile (players don't move mid-plan) */
+  const walk = new Map(alive.map(p => [p, pathDistances(map, p.x, p.y)]));
+  /* walking distance from `p` to (x, y); a walled-off tile counts as far away */
+  const distTo = (p, x, y) => {
+    const d = walk.get(p)[y][x];
+    return Number.isFinite(d) ? d : 99 + Math.abs(x - p.x) + Math.abs(y - p.y);
+  };
 
   for (const e of enemies) {
     if (!e.alive) continue;
     if (!alive.length) break;
 
-    /* nearest player */
+    /* can attack without moving? always take the shot (nearest target in range) */
+    const shootable = alive.filter(p => inRange(e, p.x, p.y));
+    if (shootable.length) {
+      const target = shootable.reduce((a, b) => (manhattan(e, b) < manhattan(e, a) ? b : a));
+      actions.push({ unit: e, type: 'attack', target, mx: e.x, my: e.y });
+      continue;
+    }
+
+    /* nearest player by walking distance */
     let best = null, bestD = Infinity;
     for (const p of alive) {
-      const d = Math.abs(e.x - p.x) + Math.abs(e.y - p.y);
+      const d = distTo(p, e.x, e.y);
       if (d < bestD) { bestD = d; best = p; }
     }
-    if (!best) { actions.push({ unit: e, type: 'wait' }); continue; }
 
     /* determine AI mode: guard or aggressive */
     const threatRange = e.mov + e.weapon.rng[1];
     const isAggressive = e._ai === 'aggressive'   // explicitly set (bosses)
                       || bestD <= threatRange + 2; // player is nearby (within threat range + small buffer)
-
-    /* can attack without moving? always take the shot */
-    if (inRange(e, best.x, best.y)) {
-      actions.push({ unit: e, type: 'attack', target: best, mx: e.x, my: e.y });
-      continue;
-    }
 
     /* guard mode: stay put if no player is in threat range */
     if (!isAggressive) {
@@ -56,23 +69,26 @@ export function planEnemyTurn(enemies, players, map) {
     /* remove this enemy's current tile from claimed (it's about to move) */
     claimed.delete(`${e.x},${e.y}`);
 
-    /* find best tile to move to */
+    /* find best tile to move to: one that lets it attack (closest shot, best
+       cover) beats any that doesn't; otherwise the tile with the shortest walk
+       to the target */
     const tiles = reachable(e, map, all);
-    let pick = null, pickD = Infinity, pickAtk = false;
+    const [lo, hi] = e.weapon.rng;
+    let pick = null, pickScore = Infinity, pickAtk = false;
 
     for (const t of tiles) {
       /* skip tiles already claimed by another enemy */
       if (claimed.has(`${t.x},${t.y}`)) continue;
-      const d = Math.abs(t.x - best.x) + Math.abs(t.y - best.y);
-      const [lo, hi] = e.weapon.rng;
+      const d = manhattan(t, best);
       const canAtk = d >= lo && d <= hi;
-      if (canAtk && (!pickAtk || d < pickD)) { pick = t; pickD = d; pickAtk = true; }
-      else if (!pickAtk && d < pickD)         { pick = t; pickD = d; }
+      const cover = map.at(t.x, t.y).def * 0.1;
+      const score = (canAtk ? d : distTo(best, t.x, t.y)) - cover;
+      if (canAtk && (!pickAtk || score < pickScore))      { pick = t; pickScore = score; pickAtk = true; }
+      else if (!canAtk && !pickAtk && score < pickScore)  { pick = t; pickScore = score; }
     }
 
     if (pick) {
-      const d2 = Math.abs(pick.x - best.x) + Math.abs(pick.y - best.y);
-      const [lo, hi] = e.weapon.rng;
+      const d2 = manhattan(pick, best);
       const canAtk = d2 >= lo && d2 <= hi;
       actions.push({ unit: e, type: canAtk ? 'move_attack' : 'move', target: canAtk ? best : null, mx: pick.x, my: pick.y });
       /* claim the destination tile */

@@ -1,42 +1,63 @@
-import { COLS, ROWS, T_WALL, T_PLAIN, T_ROAD, T_FOREST, T_FORT } from './constants.js';
+import {
+  COLS, ROWS,
+  T_WALL, T_PLAIN, T_ROAD, T_FOREST, T_FORT,
+  T_MOUNTAIN, T_WATER, T_HILL, T_SWAMP, T_FORD, T_BRIDGE,
+} from './constants.js';
 
-/* ── BSP node ── */
-class Node {
-  constructor(x, y, w, h) { this.x = x; this.y = y; this.w = w; this.h = h; this.l = null; this.r = null; this.room = null; }
-}
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const rnd = n => Math.floor(Math.random() * n);
+const between = (lo, hi) => lo + rnd(hi - lo + 1);
+
+/* Player start zone: the leftmost columns. */
+const START_W = 3;
+
+/* Per-theme feature budgets. Blob counts are [min, max]. `river` is the
+   chance the map is split by a river (bridge + ford); `ridge` splits it with
+   a mountain range that only a couple of passes cut through. */
+const THEMES = {
+  forest:     { river: 0.35, mountain: [0, 1], lake: [0, 1], forest: [5, 7], hill: [2, 3], swamp: [1, 2], forts: 1 },
+  fortress:   { river: 0.60, mountain: [3, 4], lake: [0, 0], forest: [1, 2], hill: [2, 3], swamp: [0, 0], forts: 2 },
+  gauntlet:   { ridge: true, mountain: [0, 1], lake: [0, 0], forest: [2, 3], hill: [2, 3], swamp: [0, 1], forts: 1 },
+  boss:       { river: 0.40, mountain: [2, 3], lake: [1, 2], forest: [1, 2], hill: [1, 3], swamp: [0, 1], forts: 1 },
+  open_field: { river: 0.50, mountain: [0, 1], lake: [0, 1], forest: [2, 3], hill: [2, 3], swamp: [0, 1], forts: 1 },
+  mixed:      { river: 0.75, mountain: [1, 2], lake: [1, 1], forest: [3, 4], hill: [2, 3], swamp: [1, 1], forts: 1 },
+};
+
+/* Terrain enemies may start on — never hazards or crossings. */
+const SPAWNABLE = new Set([T_PLAIN, T_FOREST, T_HILL, T_FORT, T_ROAD]);
 
 /* ═══════════════════════════════════════════════════════════════
    GameMap — procedural level generator
    ═══════════════════════════════════════════════════════════════
-   Level design principles applied:
-   1. Fun to navigate + chaos — varied room sizes, winding corridors
-   2. Mechanics-driven — terrain placement creates tactical choices
-   3. Emotional through mechanics — tension (corridors), relief (forts)
-   4. Environmental storytelling — room themes convey purpose visually
-   5. Clear objective, player chooses how — multiple paths to enemies
-   6. Teach new things — floor themes emphasise different mechanics
-   7. Surprise & pacing — dramatic room-size shifts, aesthetic changes
-   8. Risk/reward — forts placed near harder encounters
-   9. Non-linearity — rooms connected as a web, not a chain
-   10. Empower player — defensive positions, chokepoints, ambush spots
-   ═══════════════════════════════════════════════════════════════ */
+   Maps are open ground, not rooms joined by corridors, so fights happen
+   across the field instead of at one chokepoint. Terrain does the shaping:
+     • river   — a bridge (fast, one tile wide) plus a ford (slow, exposed):
+                 a chokepoint you can hold or go around
+     • ridge   — the gauntlet's mountain range with a few passes: the one
+                 floor where a chokepoint is the point
+     • mountains and lakes block movement and make lanes and flanks
+     • forest, hill (best cover), swamp (slow, easy to hit) and forts (heal)
+   Players start on the left; the map is randomly flipped top-to-bottom.
+   Every attempt is checked for connectivity, with a bare field as fallback. */
 export class GameMap {
   constructor(floor) {
     this.floor = floor;
     this.tiles = [];
-    this.rooms = [];
     this.playerSpawns = [];
     this.enemySpawns  = [];
-    if (floor === 0) this._generateTutorial();
-    else             this._generate();
+    if (floor === 0) {
+      this._generateTutorial();
+    } else {
+      this._floorTheme = this._pickTheme();
+      this._generate();
+    }
   }
 
   at(x, y)       { return (x >= 0 && x < COLS && y >= 0 && y < ROWS) ? this.tiles[y][x] : T_WALL; }
   passable(x, y) { return this.at(x, y).cost < 99; }
   moveCost(x, y) { return this.at(x, y).cost; }
-  _set(x, y, t)  { if (x > 0 && x < COLS - 1 && y > 0 && y < ROWS - 1) this.tiles[y][x] = t; }
 
-  /* ═══════════ TUTORIAL (floor 1) ═══════════
+  /* ═══════════ TUTORIAL ═══════════
      Hand-crafted 3-room map with progressive teaching:
        Room A → movement basics (safe, open)
        Room B → terrain & weapon triangle (forests, varied enemies)
@@ -56,11 +77,6 @@ export class GameMap {
     ];
     const CH = { W: T_WALL, '.': T_PLAIN, R: T_ROAD, F: T_FOREST, T: T_FORT };
     this.tiles = MAP.map(row => [...row].map(ch => CH[ch] || T_WALL));
-    this.rooms = [
-      { x: 1, y: 1, w: 5, h: 3 },
-      { x: 7, y: 1, w: 6, h: 3 },
-      { x: 8, y: 7, w: 5, h: 2 },
-    ];
     this.playerSpawns = [
       { x: 2, y: 1 }, { x: 3, y: 1 }, { x: 4, y: 1 },
       { x: 2, y: 2 }, { x: 3, y: 2 }, { x: 4, y: 2 },
@@ -72,357 +88,237 @@ export class GameMap {
     ];
   }
 
-  /* ═══════════ PROCEDURAL (floors 2+) ═══════════ */
+  /* ═══════════ PROCEDURAL ═══════════ */
   _generate() {
-    this.tiles = Array.from({ length: ROWS }, () => Array(COLS).fill(T_WALL));
-
-    /* 1. BSP → rooms */
-    const root = new Node(1, 1, COLS - 2, ROWS - 2);
-    const leaves = [];
-    this._split(root, leaves, 0);
-    for (const leaf of leaves) {
-      const room = this._carveRoom(leaf);
-      if (room) { this.rooms.push(room); leaf.room = room; }
+    for (let attempt = 0; attempt < 40; attempt++) {
+      this._build(true);
+      if (this._isValid()) break;
+      if (attempt === 39) this._build(false);
     }
-
-    /* Safety net: on a small grid an unlucky split can leave every leaf
-       under _carveRoom's minimum size, so nothing gets carved. Without at
-       least one room, _placeSpawns() never runs (it bails on an empty
-       this.rooms) and spawnParty() then crashes indexing spawns[0] on an
-       empty playerSpawns array. Force-carve the largest leaf regardless
-       of size so there's always somewhere to spawn into. */
-    if (this.rooms.length === 0 && leaves.length > 0) {
-      const biggest = leaves.reduce((a, b) => (a.w * a.h >= b.w * b.h ? a : b));
-      const w = Math.max(1, Math.min(biggest.w, COLS - 1 - biggest.x));
-      const h = Math.max(1, Math.min(biggest.h, ROWS - 1 - biggest.y));
-      for (let r = biggest.y; r < biggest.y + h; r++)
-        for (let c = biggest.x; c < biggest.x + w; c++)
-          this.tiles[r][c] = T_PLAIN;
-      const room = { x: biggest.x, y: biggest.y, w, h };
-      this.rooms.push(room);
-      biggest.room = room;
-    }
-
-    /* 2. Non-linear connectivity — connect as a web, not a chain
-       First: connect sequential neighbours (guarantees reachability).
-       Then: add 1-2 extra cross-connections (creates alternate paths,
-       bidirectionality, and player choice). */
-    for (let i = 0; i < leaves.length - 1; i++) {
-      const a = leaves[i].room  || this._center(leaves[i]);
-      const b = leaves[i+1].room || this._center(leaves[i+1]);
-      this._corridor(a, b);
-    }
-    /* extra cross-connections for non-linearity */
-    const extras = 1 + Math.floor(Math.random() * 2);
-    for (let e = 0; e < extras && this.rooms.length > 3; e++) {
-      const i = Math.floor(Math.random() * this.rooms.length);
-      let j = Math.floor(Math.random() * this.rooms.length);
-      if (j === i) j = (j + 2) % this.rooms.length;
-      this._corridor(this.rooms[i], this.rooms[j]);
-    }
-
-    /* 3. Floor theme — each floor emphasises different mechanics */
-    this._applyTheme();
-
-    /* 4. Room dressing — give each room tactical character */
-    this._dressRooms();
-
-    /* 5. Corridor dressing — cover near chokepoints */
-    this._dressCorridors();
-
-    /* 6. Spawn placement — risk/reward scaling */
-    this._placeSpawns();
+    if (Math.random() < 0.5) this._flipVertical();
   }
 
-  /* ── BSP ── */
-  _split(node, leaves, depth) {
-    /* MIN scales with the 14×10 grid (root is 12×8) so the BSP still gets
-       a couple of split levels instead of the root leafing out immediately
-       into one or two oversized rooms — a node leafs out the moment
-       *either* dimension dips below MIN*2, so MIN needs to stay
-       comfortably under half of root w/h.
-       MIN must also stay >= _carveRoom's (minSize + 2) — a leaf as small
-       as MIN can result from a split, and _carveRoom needs leaf.dim - 2
-       to reach its own minimum or it carves nothing at all. Dropped below
-       that once (MIN=3 vs the old minSize=3, i.e. needed MIN>=5) and most
-       leaves silently failed to become rooms — regenerating repeatedly
-       produced single-room, sometimes even zero-room, levels. */
-    const MIN = 4, MAX_D = 4;
-    if (depth >= MAX_D || node.w < MIN * 2 || node.h < MIN * 2) { leaves.push(node); return; }
-    /* strict `>` (not `>=`) matters here: the 12×8 root's first split
-       leaves 8-wide/8-tall children on a small grid, and treating a tie
-       as "horizontal" would keep cutting the same axis forever, never
-       splitting height — every room would span the same rows. `>` makes
-       a tie fall through to a vertical cut instead. */
-    const horiz = node.w > node.h;
-    if (horiz) {
-      const s = MIN + Math.floor(Math.random() * (node.w - MIN * 2));
-      node.l = new Node(node.x, node.y, s, node.h);
-      node.r = new Node(node.x + s, node.y, node.w - s, node.h);
-    } else {
-      const s = MIN + Math.floor(Math.random() * (node.h - MIN * 2));
-      node.l = new Node(node.x, node.y, node.w, s);
-      node.r = new Node(node.x, node.y + s, node.w, node.h - s);
-    }
-    this._split(node.l, leaves, depth + 1);
-    this._split(node.r, leaves, depth + 1);
-  }
-
-  _carveRoom(leaf) {
-    const minW = 2, minH = 2;
-    /* Surprise: pacing through room-size variation.
-       Occasionally generate tiny (2x2) or large (8x6) rooms
-       for dramatic shifts in tactical feel. Must stay <= MIN(_split) - 2,
-       or leaves at the smallest size _split can produce fail to carve
-       anything at all — see the comment on MIN in _split. */
-    const maxW = Math.min(8, leaf.w - 2);
-    const maxH = Math.min(6, leaf.h - 2);
-    if (maxW < minW || maxH < minH) return null;
-    const w = minW + Math.floor(Math.random() * (maxW - minW + 1));
-    const h = minH + Math.floor(Math.random() * (maxH - minH + 1));
-    const x = leaf.x + 1 + Math.floor(Math.random() * Math.max(1, leaf.w - w - 1));
-    const y = leaf.y + 1 + Math.floor(Math.random() * Math.max(1, leaf.h - h - 1));
-    for (let r = y; r < y + h && r < ROWS; r++)
-      for (let c = x; c < x + w && c < COLS; c++)
-        this.tiles[r][c] = T_PLAIN;
-    return { x, y, w, h };
-  }
-
-  _center(n) { return { x: n.x + Math.floor(n.w / 2), y: n.y + Math.floor(n.h / 2), w: 0, h: 0 }; }
-
-  _corridor(a, b) {
-    let x1 = Math.floor(a.x + (a.w || 0) / 2), y1 = Math.floor(a.y + (a.h || 0) / 2);
-    let x2 = Math.floor(b.x + (b.w || 0) / 2), y2 = Math.floor(b.y + (b.h || 0) / 2);
-    let x = x1, y = y1;
-    /* L-shaped corridor — random whether horizontal or vertical first
-       creates winding, interesting paths */
-    if (Math.random() < 0.5) {
-      while (x !== x2) { this._set(x, y, T_ROAD); x += x < x2 ? 1 : -1; }
-      while (y !== y2) { this._set(x, y, T_ROAD); y += y < y2 ? 1 : -1; }
-    } else {
-      while (y !== y2) { this._set(x, y, T_ROAD); y += y < y2 ? 1 : -1; }
-      while (x !== x2) { this._set(x, y, T_ROAD); x += x < x2 ? 1 : -1; }
-    }
-    this._set(x2, y2, T_ROAD);
-  }
-
-  /* ── Floor themes ──
-     Principle 6: constantly teach new things.
-     Principle 7: surprise with aesthetic/pacing changes.
-     Each floor range has a dominant theme that emphasises
-     a mechanic the player should be mastering. */
-  _applyTheme() {
-    this._floorTheme = this._pickTheme();
-  }
-
+  /* Each floor emphasises a different mechanic. */
   _pickTheme() {
     const f = this.floor;
     if (f === 1) return 'forest';        // the wilds
     if (f === 2) return 'fortress';      // enemy stronghold
     if (f === 3) return 'gauntlet';      // perilous pass
     if (f === 4) return 'boss';          // the warlord's throne
-    /* fallback */
     const themes = ['forest', 'fortress', 'gauntlet', 'open_field', 'mixed'];
     return themes[(f - 5) % themes.length];
   }
 
-  /* ── Room dressing ──
-     Principle 2: mechanics-driven (terrain creates tactical choices)
-     Principle 3: emotional through mechanics (relief at forts, tension in tight spaces)
-     Principle 8: risk/reward (forts near harder encounters)
-     Principle 10: empower player (defensive positions near corridors) */
-  _dressRooms() {
-    if (this.rooms.length < 2) return;
-    const s = this.rooms[0];
-    const cx0 = s.x + s.w / 2, cy0 = s.y + s.h / 2;
+  _build(withFeatures) {
+    this.tiles = Array.from({ length: ROWS }, () => Array(COLS).fill(T_PLAIN));
+    this.playerSpawns = [];
+    this.enemySpawns = [];
+    const P = THEMES[this._floorTheme] || THEMES.mixed;
 
-    /* sort by distance from start for difficulty scaling */
-    const others = this.rooms.slice(1).map(r => ({
-      room: r,
-      dist: Math.abs(r.x + r.w / 2 - cx0) + Math.abs(r.y + r.h / 2 - cy0),
-    })).sort((a, b) => a.dist - b.dist);
-
-    /* Start room: empower player — a few trees for cover, feels safe */
-    if (Math.random() < 0.5) this._placeTrees(s, 1);
-
-    let fortPlaced = false;
-    const theme = this._floorTheme;
-
-    for (let i = 0; i < others.length; i++) {
-      const { room } = others[i];
-      const ratio = i / Math.max(1, others.length - 1); // 0=near, 1=far
-      const area = room.w * room.h;
-      const isLarge = area >= 16;
-      const isFar = ratio > 0.5;
-
-      /* Risk/reward: forts placed in harder (farther) rooms.
-         Going deeper is risky but rewarded with healing. */
-      if (!fortPlaced && isFar && (theme === 'fortress' || Math.random() < 0.3)) {
-        this._themeFort(room);
-        fortPlaced = true;
-        continue;
-      }
-
-      /* Theme-driven room dressing */
-      switch (theme) {
-        case 'forest':
-          this._themeForest(room, 3 + Math.floor(Math.random() * 3));
-          break;
-        case 'fortress':
-          if (!fortPlaced && i === others.length - 1) {
-            this._themeFort(room); fortPlaced = true;
-          } else {
-            this._themeForest(room, 2);
-          }
-          break;
-        case 'gauntlet':
-          /* tight rooms: minimal decoration, chokepoints matter most */
-          if (Math.random() < 0.3) this._placeTrees(room, 1);
-          break;
-        case 'open_field':
-          /* large open areas with sparse cover — positioning is key */
-          if (isLarge) this._placeTrees(room, 1 + Math.floor(Math.random() * 2));
-          break;
-        case 'boss':
-          /* dark fortress: sparse trees, fort in boss room for tension */
-          if (isFar && !fortPlaced) { this._themeFort(room); fortPlaced = true; }
-          else if (Math.random() < 0.4) this._placeTrees(room, 1 + Math.floor(Math.random() * 2));
-          break;
-        case 'mixed':
-        default: {
-          /* chaos: random theme per room for surprise */
-          const roll = Math.random();
-          if (roll < 0.3) this._themeForest(room, 2 + Math.floor(Math.random() * 3));
-          else if (roll < 0.45 && !fortPlaced) { this._themeFort(room); fortPlaced = true; }
-          else if (roll < 0.6) this._placeTrees(room, 1);
-          break;
-        }
-      }
+    let barrier = null;
+    if (withFeatures) {
+      if (P.ridge)                          barrier = this._placeRidge();
+      else if (Math.random() < P.river)     barrier = this._placeRiver();
+      for (let i = between(...P.mountain); i > 0; i--) this._blob(T_MOUNTAIN, between(2, 4), START_W);
+      for (let i = between(...P.lake); i > 0; i--)     this._blob(T_WATER,    between(2, 4), START_W);
+      for (let i = between(...P.swamp); i > 0; i--)    this._blob(T_SWAMP,    between(3, 4), START_W);
+      for (let i = between(...P.hill); i > 0; i--)     this._blob(T_HILL,     between(2, 3), 0);
+      for (let i = between(...P.forest); i > 0; i--)   this._blob(T_FOREST,   between(2, 4), 0);
     }
+    this._placeForts(P.forts, barrier);
+    this._placeSpawns(barrier);
+  }
 
-    /* guarantee at least one fort per floor (risk/reward anchor) */
-    if (!fortPlaced && others.length > 0) {
-      this._themeFort(others[others.length - 1].room);
+  /* Meandering top-to-bottom band in columns 4–8, set to `type`. Returns the
+     x's it covers in each row (two at a bend, so it stays orthogonally
+     connected and nothing can slip through diagonally). */
+  _meander(type) {
+    const rows = [];
+    let x = between(5, 7);
+    for (let y = 0; y < ROWS; y++) {
+      const xs = [x];
+      const r = Math.random();
+      if (r < 0.25 && x > 4) x--; else if (r < 0.5 && x < 8) x++;
+      if (x !== xs[0]) xs.push(x);
+      rows.push(xs);
+      for (const bx of xs) this.tiles[y][bx] = type;
+    }
+    return rows;
+  }
+
+  _barrier(rows, crossY) {
+    const all = rows.flat();
+    return { crossY, minX: Math.min(...all), maxX: Math.max(...all) };
+  }
+
+  /* River with a bridge, a two-wide ford, and now and then a second bridge. */
+  _placeRiver() {
+    const rows = this._meander(T_WATER);
+    const cross = (y, type) => { for (const bx of rows[y]) this.tiles[y][bx] = type; };
+    const bridgeY = between(1, ROWS - 2);
+    cross(bridgeY, T_BRIDGE);
+    const spaced = [...Array(ROWS).keys()].filter(y => Math.abs(y - bridgeY) >= 3);
+    const fordY = spaced.length ? spaced[rnd(spaced.length)] : (bridgeY + 3) % ROWS;
+    cross(fordY, T_FORD);
+    if (fordY + 1 < ROWS) cross(fordY + 1, T_FORD);
+    const far = spaced.filter(y => Math.abs(y - fordY) >= 3);
+    if (far.length && Math.random() < 0.3) cross(far[rnd(far.length)], T_BRIDGE);
+    return this._barrier(rows, bridgeY);
+  }
+
+  /* Mountain range with a two-wide pass, and often a narrow one-wide pass. */
+  _placeRidge() {
+    const rows = this._meander(T_MOUNTAIN);
+    const open = y => { for (const bx of rows[y]) this.tiles[y][bx] = T_PLAIN; };
+    const passY = between(1, ROWS - 3);
+    open(passY); open(passY + 1);
+    const far = [...Array(ROWS).keys()].filter(y => Math.abs(y - passY) >= 4);
+    if (far.length && Math.random() < 0.5) open(far[rnd(far.length)]);
+    return this._barrier(rows, passY);
+  }
+
+  /* Grow a clump of `type` on plain ground, no further left than `minX`. */
+  _blob(type, size, minX) {
+    for (let tries = 0; tries < 20; tries++) {
+      const sx = between(minX, COLS - 1), sy = rnd(ROWS);
+      if (this.tiles[sy][sx] !== T_PLAIN) continue;
+      const cells = [[sx, sy]];
+      this.tiles[sy][sx] = type;
+      for (let guard = 0; cells.length < size && guard < 40; guard++) {
+        const [cx, cy] = cells[rnd(cells.length)];
+        const [dx, dy] = DIRS[rnd(4)];
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < minX || nx >= COLS || ny < 0 || ny >= ROWS || this.tiles[ny][nx] !== T_PLAIN) continue;
+        this.tiles[ny][nx] = type;
+        cells.push([nx, ny]);
+      }
+      return;
     }
   }
 
-  _themeForest(room, count) { this._placeTrees(room, count); }
-
-  _themeFort(room) {
-    let fx = room.x + Math.floor(room.w / 2);
-    let fy = room.y + Math.floor(room.h / 2);
-    /* if the centre tile isn't plain (e.g. a corridor runs through it),
-       scan the room for any plain tile to guarantee placement */
-    if (this.at(fx, fy) !== T_PLAIN) {
-      outer:
-      for (let dy = 0; dy < room.h; dy++) {
-        for (let dx = 0; dx < room.w; dx++) {
-          const nx = room.x + dx, ny = room.y + dy;
-          if (this.at(nx, ny) === T_PLAIN) { fx = nx; fy = ny; break outer; }
-        }
-      }
-    }
-    if (this.at(fx, fy) === T_PLAIN) this.tiles[fy][fx] = T_FORT;
-    for (const [dx, dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]) {
-      const nx = fx + dx, ny = fy + dy;
-      if (this.at(nx, ny) === T_PLAIN && Math.random() < 0.4)
+  /* A fort on plain ground in columns xMin–xMax, as near row yHint as it can
+     get, with a little forest around it. */
+  _placeFort(xMin, xMax, yHint) {
+    const spots = [];
+    for (let y = 0; y < ROWS; y++)
+      for (let x = xMin; x <= xMax; x++)
+        if (this.tiles[y][x] === T_PLAIN) spots.push({ x, y, d: Math.abs(y - yHint) + Math.random() });
+    if (!spots.length) return;
+    spots.sort((a, b) => a.d - b.d);
+    const { x, y } = spots[0];
+    this.tiles[y][x] = T_FORT;
+    for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS && this.tiles[ny][nx] === T_PLAIN && Math.random() < 0.4)
         this.tiles[ny][nx] = T_FOREST;
     }
   }
 
-  _placeTrees(room, count) {
-    for (let i = 0; i < count; i++) {
-      const tx = room.x + Math.floor(Math.random() * room.w);
-      const ty = room.y + Math.floor(Math.random() * room.h);
-      if (this.at(tx, ty) === T_PLAIN) this.tiles[ty][tx] = T_FOREST;
+  /* Forts reward pushing through (enemy side, by the crossing) and give
+     defenders a rally point (player side). Without a barrier they sit
+     mid-map / on the far side; on the boss floor, behind the warlord. */
+  _placeForts(count, barrier) {
+    if (this._floorTheme === 'boss')  this._placeFort(COLS - 5, COLS - 3, rnd(ROWS));
+    else if (barrier)                 this._placeFort(barrier.maxX + 2, barrier.maxX + 3, barrier.crossY);
+    else                              this._placeFort(Math.floor(COLS / 2), COLS - 3, rnd(ROWS));
+
+    if (count > 1 || (barrier && Math.random() < 0.5)) {
+      if (barrier) this._placeFort(Math.max(START_W, barrier.minX - 3), barrier.minX - 1, barrier.crossY);
+      else         this._placeFort(START_W, Math.floor(COLS / 2) - 1, rnd(ROWS));
     }
   }
 
-  /* ── Corridor dressing ──
-     Principle 10: empower player — cover near chokepoints
-     lets the player set up ambushes or defensive lines. */
-  _dressCorridors() {
-    const chance = this._floorTheme === 'gauntlet' ? 0.15 : 0.07;
-    for (let y = 1; y < ROWS - 1; y++)
-      for (let x = 1; x < COLS - 1; x++) {
-        if (this.at(x, y) !== T_ROAD) continue;
-        for (const [dx, dy] of [[-1,0],[1,0],[0,-1],[0,1]]) {
-          const nx = x + dx, ny = y + dy;
-          if (this.at(nx, ny) === T_PLAIN && Math.random() < chance)
-            this.tiles[ny][nx] = T_FOREST;
-        }
+  _placeSpawns(barrier) {
+    /* players: the 8 plain tiles nearest a random spot on the left edge */
+    const cy = between(3, ROWS - 4);
+    const start = [];
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < START_W; x++)
+        if (this.tiles[y][x] === T_PLAIN) start.push({ x, y, d: Math.abs(y - cy) + x * 0.5 });
+    start.sort((a, b) => a.d - b.d);
+    this.playerSpawns = start.slice(0, 8).map(({ x, y }) => ({ x, y }));
+
+    /* enemies: beyond the barrier, or the right half of the map */
+    const minX = barrier ? Math.max(barrier.maxX + 2, 7) : 7;
+    const cands = [];
+    for (let y = 0; y < ROWS; y++)
+      for (let x = minX; x < COLS; x++) {
+        const t = this.tiles[y][x];
+        if (SPAWNABLE.has(t)) cands.push({ x, y, def: t.def });
       }
-  }
 
-  /* ── Spawns ──
-     Principle 5: clear objective (defeat all enemies), player chooses path
-     Principle 8: risk/reward — harder enemies in rooms with better terrain
-     Principle 9: non-linearity — enemies in multiple rooms, tackle any order */
-  _placeSpawns() {
-    if (this.rooms.length === 0) return;
-
-    /* Player spawns in safe start room — scan row-by-row until we have 8 positions */
-    const start = this.rooms[0];
-    outer:
-    for (let dy = 0; dy < start.h; dy++) {
-      for (let dx = 0; dx < start.w; dx++) {
-        if (this.playerSpawns.length >= 8) break outer;
-        const sx = start.x + dx, sy = start.y + dy;
-        if (this.passable(sx, sy)) this.playerSpawns.push({ x: sx, y: sy });
-      }
-    }
-    if (!this.playerSpawns.length)
-      this.playerSpawns.push({ x: start.x, y: start.y });
-
-    /* Sort rooms by distance — difficulty gradient */
-    const cx0 = start.x + start.w / 2, cy0 = start.y + start.h / 2;
-    const others = this.rooms.slice(1).map(r => ({
-      room: r,
-      dist: Math.abs(r.x + r.w / 2 - cx0) + Math.abs(r.y + r.h / 2 - cy0),
-    })).sort((a, b) => a.dist - b.dist);
-
-    const occupied = new Set();
-    const isBoss = this._floorTheme === 'boss';
-    const addSpawn = (sx, sy, cls) => {
-      const k = `${sx},${sy}`;
-      if (this.passable(sx, sy) && !occupied.has(k)) {
-        occupied.add(k);
-        const spawn = { x: sx, y: sy };
-        if (cls) spawn.cls = cls;
-        this.enemySpawns.push(spawn);
-        return true;
-      }
-      return false;
+    const picked = [];
+    const take = (c, cls) => {
+      const spawn = { x: c.x, y: c.y };
+      if (cls) spawn.cls = cls;
+      this.enemySpawns.push(spawn);
+      picked.push(c);
+      cands.splice(cands.indexOf(c), 1);
     };
-
-    for (let i = 0; i < others.length; i++) {
-      const rm = others[i].room;
-      const cx = rm.x + Math.floor(rm.w / 2);
-      const cy = rm.y + Math.floor(rm.h / 2);
-      const ratio = i / Math.max(1, others.length - 1);
-      const isLast = i === others.length - 1;
-
-      /* every room gets at least one enemy */
-      if (!addSpawn(cx, cy)) {
-        addSpawn(cx + 1, cy) || addSpawn(cx - 1, cy) || addSpawn(cx, cy + 1);
+    /* the boss goes first so a small enemy count can never cut it off */
+    if (this._floorTheme === 'boss' && cands.length) {
+      const mid = ROWS / 2;
+      const score = c => c.x - Math.abs(c.y - mid) * 0.3;
+      take(cands.reduce((a, b) => (score(b) > score(a) ? b : a)), 'WARLORD');
+    }
+    /* then farthest-point order, favouring good cover, so any prefix of the
+       list (spawnEnemies takes as many as the difficulty asks for) is spread
+       across the field rather than bunched */
+    while (picked.length < 12 && cands.length) {
+      let best = null, bestScore = -Infinity;
+      for (const c of cands) {
+        const gap = picked.length
+          ? Math.min(...picked.map(p => Math.abs(p.x - c.x) + Math.abs(p.y - c.y)))
+          : 5;
+        const score = Math.min(gap, 5) + c.def * 0.75 + Math.random() * 1.5;
+        if (score > bestScore) { bestScore = score; best = c; }
       }
-
-      /* farther rooms get more enemies (risk escalation) */
-      if (ratio > 0.4 && rm.w >= 4) {
-        const dir = Math.random() < 0.5 ? 1 : -1;
-        addSpawn(cx + dir, cy) || addSpawn(cx, cy + 1);
-      }
-
-      /* last room: boss encounter */
-      if (isLast && rm.h >= 3) {
-        addSpawn(cx, cy + 1) || addSpawn(cx, cy - 1);
-      }
-      /* boss floor: place WARLORD in the farthest room */
-      if (isBoss && isLast) {
-        addSpawn(cx + 1, cy + 1, 'WARLORD') || addSpawn(cx - 1, cy, 'WARLORD') || addSpawn(cx, cy - 1, 'WARLORD');
-      }
+      take(best);
     }
   }
+
+  _isValid() {
+    if (this.playerSpawns.length < 8 || this.enemySpawns.length < 8) return false;
+    const p0 = this.playerSpawns[0];
+    const dist = pathDistances(this, p0.x, p0.y);
+    if (this.enemySpawns.some(s => !Number.isFinite(dist[s.y][s.x]))) return false;
+    /* no walled-off pockets: every walkable tile can be reached from the start */
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++)
+        if (this.passable(x, y) && !Number.isFinite(dist[y][x])) return false;
+    return true;
+  }
+
+  _flipVertical() {
+    this.tiles.reverse();
+    const flip = s => { s.y = ROWS - 1 - s.y; };
+    this.playerSpawns.forEach(flip);
+    this.enemySpawns.forEach(flip);
+  }
+}
+
+/* ═══════════ Walking distance ═══════════
+   Cost to walk from (sx, sy) to every tile, ignoring units — Infinity where
+   walls/water/mountains cut a tile off. Used to validate generated maps and
+   by the enemy AI, which has to route around rivers and ridges instead of
+   pressing against them. */
+export function pathDistances(map, sx, sy) {
+  const dist = Array.from({ length: ROWS }, () => Array(COLS).fill(Infinity));
+  dist[sy][sx] = 0;
+  const open = [[sx, sy]];
+  while (open.length) {
+    let bi = 0;
+    for (let i = 1; i < open.length; i++)
+      if (dist[open[i][1]][open[i][0]] < dist[open[bi][1]][open[bi][0]]) bi = i;
+    const [x, y] = open.splice(bi, 1)[0];
+    for (const [dx, dy] of DIRS) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS || !map.passable(nx, ny)) continue;
+      const nd = dist[y][x] + map.moveCost(nx, ny);
+      if (nd < dist[ny][nx]) { dist[ny][nx] = nd; open.push([nx, ny]); }
+    }
+  }
+  return dist;
 }
 
 /* ═══════════ Movement range (Dijkstra) ═══════════ */
@@ -442,7 +338,7 @@ export function reachable(unit, map, units) {
     if (dist.has(ck) && dist.get(ck) < cur.g) continue;
     result.push({ x: cur.x, y: cur.y });
 
-    for (const [dx, dy] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+    for (const [dx, dy] of DIRS) {
       const nx = cur.x + dx, ny = cur.y + dy;
       if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
       if (!map.passable(nx, ny)) continue;
