@@ -504,167 +504,212 @@ export class Renderer {
     c.fillText('Weapon triangle: Sword > Axe > Lance > Sword', mx, by3 + bh + 62);
   }
 
-  /* ── Pixel art battle scene for title screen ── */
+  /* ── Pixel art battle scene for title screen ──
+     A looping fight: the Lord strikes the Brigand, the Brigand strikes back,
+     then both go for it at once and the weapons clash. Each blow is a
+     wind-up, a fast lunging swing, then an impact — sparks at the weapon
+     tip, a damage number, recoil, a white hit-flash and a little screen
+     shake. Everything is drawn in "art pixels" (P screen px each) relative
+     to the fighter's feet. */
   _titleBattle(c, mx, my) {
-    const t = this.t;
-    const P = 4; /* pixel scale */
-    const px = (x, y, w, h) => c.fillRect(x, y, w * P, h * P);
+    const P = 3;
+    const CYCLE = 300;
+    const ph = this.t % CYCLE;
+    const ease = k => k * k * (3 - 2 * k);
+    const lerp = (a, b, k) => a + (b - a) * k;
+
+    /* a blow starts at frame s and lands HIT frames later */
+    const LORD_ATK = 30, BRIG_ATK = 130, CLASH_ATK = 210, HIT = 34;
+    const BLOW  = { reach: 22, strike: 0.15, follow: 0.45 };   // aimed at the chest
+    const CLASH = { reach: 15, strike: -0.25, follow: -0.05 }; // weapons meet high, in the middle
+    const REST = -1.2, WIND = -2.6;                            // weapon-arm angle: 0 = forward, negative = up/back
+
+    const pose = (s, b) => {
+      const u = ph - s;
+      if (u < 0 || u >= 80) return { theta: REST, lunge: 0 };
+      if (u < 25) { const k = ease(u / 25);           return { theta: lerp(REST, WIND, k),         lunge: lerp(0, -4, k) }; }
+      if (u < HIT) { const k = (u - 25) / (HIT - 25); return { theta: lerp(WIND, b.strike, k * k), lunge: lerp(-4, b.reach, ease(k)) }; }
+      if (u < 50) { const k = (u - HIT) / 16;         return { theta: lerp(b.strike, b.follow, k), lunge: b.reach }; }
+      const k = ease((u - 50) / 30);                  return { theta: lerp(b.follow, REST, k),     lunge: lerp(b.reach, 0, k) };
+    };
+    const lordPose = ph >= CLASH_ATK ? pose(CLASH_ATK, CLASH) : pose(LORD_ATK, BLOW);
+    const brigPose = ph >= CLASH_ATK ? pose(CLASH_ATK, CLASH) : pose(BRIG_ATK, BLOW);
+
+    /* how a fighter reacts to being hit at frame `at` */
+    const react = at => {
+      const dt = ph - at;
+      if (dt < 0 || dt > 40) return { push: 0, flash: false, shake: 0 };
+      return {
+        push: 16 * Math.exp(-dt / 9),
+        flash: dt < 8 && (dt < 4 || dt % 2 === 0),
+        shake: dt < 12 ? Math.sin(dt * 2.2) * 3 * (1 - dt / 12) : 0,
+      };
+    };
+    const onBrig = react(LORD_ATK + HIT);    // Lord's blow lands on the Brigand
+    const onLord = react(BRIG_ATK + HIT);    // Brigand's blow lands on the Lord
+    const clash  = react(CLASH_ATK + HIT);   // both recoil from the clash
+    const lordPush = onLord.push + clash.push, brigPush = onBrig.push + clash.push;
+    const lordFlash = onLord.flash || clash.flash, brigFlash = onBrig.flash || clash.flash;
+    const shakeX = onBrig.shake + onLord.shake + clash.shake * 1.6;
+    const shakeY = Math.abs(clash.shake) * 0.5;
+
+    const feetY = my + 42;
+    const lordX = mx - 58 + lordPose.lunge - lordPush;
+    const brigX = mx + 58 - brigPose.lunge + brigPush;
+    const sway  = th => (th === REST ? Math.sin(this.t * 0.09) * 0.08 : 0);
+    const lb = Math.round(Math.sin(this.t * 0.12));
+    const bb = Math.round(Math.sin(this.t * 0.12 + 1.5));
+    const flutter = Math.round(Math.sin(this.t * 0.15));
+
+    c.save();
+    c.translate(Math.round(shakeX), Math.round(shakeY));
 
     /* ground / terrain */
     c.fillStyle = '#2d5a27';
     c.fillRect(mx - 160, my + 40, 320, 60);
     c.fillStyle = '#5a8a20';
     c.fillRect(mx - 160, my + 30, 320, 14);
-
-    /* grass tufts */
     c.fillStyle = '#3a6a18';
-    for (const gx of [-140, -80, -20, 50, 100]) {
-      px(mx + gx, my + 32, 3, 1);
-      px(mx + gx + 4, my + 30, 2, 1);
+    for (const gx of [-140, -100, -20, 26, 100, 138]) {
+      c.fillRect(mx + gx, my + 32, 9, 3);
+      c.fillRect(mx + gx + 12, my + 30, 6, 3);
     }
 
-    /* clash spark animation */
-    const spark = Math.sin(t * 0.2) > 0;
-    if (spark) {
-      c.fillStyle = '#ffff80';
-      const sx = mx, sy = my - 14;
-      px(sx - 2, sy - 8, 1, 1); px(sx + 6, sy - 10, 1, 1);
-      px(sx - 6, sy - 4, 1, 1); px(sx + 10, sy - 2, 1, 1);
-      px(sx, sy - 14, 1, 1);    px(sx + 4, sy + 2, 1, 1);
-      c.fillStyle = '#ffffff';
-      px(sx, sy - 6, 2, 2);
-      px(sx + 2, sy - 4, 1, 3);
-      px(sx - 2, sy - 2, 1, 2);
-    }
+    /* shadows */
+    c.fillStyle = 'rgba(0,0,0,0.25)';
+    c.fillRect(lordX - 24, feetY + 1, 48, 5);
+    c.fillRect(brigX - 27, feetY + 1, 54, 5);
 
-    /* ── Blue Lord (left, facing right, sword swinging) ── */
-    const lx = mx - 70, ly = my - 30;
-    const lBob = Math.sin(t * 0.12) * 2;
+    /* dust kicked up as each fighter lunges */
+    const dust = (x, dir, s) => {
+      const u = ph - (s + 25);
+      if (u < 0 || u > 22) return;
+      c.fillStyle = `rgba(190,170,120,${1 - u / 22})`;
+      for (let i = 0; i < 3; i++) {
+        c.fillRect(Math.round(x - dir * (6 + i * 7 + u * 0.8)), Math.round(feetY - 2 - i * 2 - u * 0.4), 5 - i, 5 - i);
+      }
+    };
+    dust(lordX, 1, LORD_ATK);  dust(brigX, -1, BRIG_ATK);
+    dust(lordX, 1, CLASH_ATK); dust(brigX, -1, CLASH_ATK);
 
-    /* boots */
-    c.fillStyle = '#4a3020';
-    px(lx + 4, ly + 44 + lBob, 4, 3);
-    px(lx + 14, ly + 42 + lBob, 4, 5);
+    /* fighters are drawn facing right with (0,0) at their feet; R() takes art pixels */
+    let flashing = false;
+    const R = (x, y, w, h, col) => {
+      c.fillStyle = flashing ? '#ffffff' : col;
+      c.fillRect(x * P, y * P, w * P, h * P);
+    };
 
-    /* legs */
-    c.fillStyle = '#1a3080';
-    px(lx + 6, ly + 36 + lBob, 3, 8);
-    px(lx + 14, ly + 34 + lBob, 3, 8);
-
-    /* body */
-    c.fillStyle = '#2860f0';
-    px(lx + 4, ly + 18 + lBob, 8, 16);
-    /* armor highlight */
-    c.fillStyle = '#5090ff';
-    px(lx + 6, ly + 20 + lBob, 2, 4);
-
+    /* ── Blue Lord ── */
+    c.save();
+    c.translate(Math.round(lordX), feetY);
+    flashing = lordFlash;
     /* cape */
-    c.fillStyle = '#1040a0';
-    px(lx, ly + 20 + lBob, 2, 14);
-    px(lx - 2, ly + 24 + lBob, 2, 12);
+    R(-8, -22 + lb, 3, 14, '#1040a0'); R(-9 + flutter, -16 + lb, 2, 10, '#0c3080');
+    /* legs and boots */
+    R(-5, -10, 3, 8, '#1a3080'); R(-6, -2, 4, 2, '#4a3020');
+    R(0, -10, 3, 8, '#1a3080');  R(0, -2, 5, 2, '#4a3020');
+    /* torso, belt, chest highlight */
+    R(-5, -22 + lb, 9, 12, '#2860f0'); R(-3, -20 + lb, 2, 4, '#5090ff');
+    R(-5, -11 + lb, 9, 1, '#c0a000');
+    /* shield */
+    R(-4, -19 + lb, 5, 8, '#3070d0');
+    R(-4, -19 + lb, 5, 1, '#c0a000'); R(-4, -12 + lb, 5, 1, '#c0a000');
+    R(-4, -19 + lb, 1, 8, '#c0a000'); R(0, -19 + lb, 1, 8, '#c0a000');
+    R(-2, -16 + lb, 1, 2, '#c0a000');
+    /* head, helmet, plume */
+    R(-2, -29 + lb, 6, 6, '#f0c890');
+    R(-3, -32 + lb, 8, 5, '#c0a000'); R(-1, -34 + lb, 4, 2, '#c0a000');
+    R(1, -27 + lb, 3, 1, '#a08000'); R(2, -26 + lb, 1, 1, '#202020');
+    R(-6 + flutter, -33 + lb, 3, 2, '#e02020'); R(-8 + flutter, -31 + lb, 3, 2, '#e02020');
+    /* sword arm — swings about the shoulder */
+    c.save();
+    c.translate(3 * P, (-19 + lb) * P);
+    c.rotate(lordPose.theta + sway(lordPose.theta));
+    R(0, -1, 5, 3, '#f0c890');
+    R(5, -3, 2, 7, '#c0a000');
+    R(7, -1, 15, 2, '#d0d0e0'); R(9, -1, 10, 1, '#ffffff'); R(22, 0, 1, 1, '#d0d0e0');
+    c.restore();
+    c.restore();
 
-    /* head */
-    c.fillStyle = '#f0c890';
-    px(lx + 6, ly + 6 + lBob, 6, 6);
-    px(lx + 4, ly + 8 + lBob, 2, 4);
+    /* ── Red Brigand (mirrored to face left) ── */
+    c.save();
+    c.translate(Math.round(brigX), feetY);
+    c.scale(-1, 1);
+    flashing = brigFlash;
+    /* legs and boots */
+    R(-5, -11, 4, 9, '#604020'); R(-6, -2, 5, 2, '#3a2a1a');
+    R(0, -11, 4, 9, '#604020');  R(0, -2, 6, 2, '#3a2a1a');
+    /* torso, vest, belt */
+    R(-7, -25 + bb, 13, 15, '#904020'); R(-5, -23 + bb, 3, 5, '#a85028');
+    R(-7, -13 + bb, 13, 2, '#604020'); R(-1, -13 + bb, 3, 2, '#c0a000');
+    /* head, bandana, scowl */
+    R(-3, -33 + bb, 8, 8, '#d0a870');
+    R(0, -26 + bb, 5, 2, '#4a2a18');
+    R(-4, -31 + bb, 10, 3, '#c02020');
+    R(-8 + flutter, -30 + bb, 4, 2, '#c02020'); R(-10 + flutter, -28 + bb, 3, 2, '#c02020');
+    R(1, -30 + bb, 4, 1, '#3a1a10'); R(2, -29 + bb, 2, 1, '#202020');
+    /* shoulder pad and off-hand fist */
+    R(3, -25 + bb, 4, 3, '#606070'); R(4, -17 + bb, 3, 3, '#d0a870');
+    /* axe arm — swings about the shoulder */
+    c.save();
+    c.translate(4 * P, (-21 + bb) * P);
+    c.rotate(brigPose.theta + sway(brigPose.theta));
+    R(0, -1, 6, 3, '#d0a870');
+    R(3, -1, 19, 2, '#6a4a2a');
+    R(17, -4, 2, 7, '#808090'); R(18, -6, 5, 11, '#808090');
+    R(22, -6, 1, 11, '#c0c0d0'); R(19, -5, 2, 2, '#e0e0f0');
+    c.restore();
+    c.restore();
+    flashing = false;
 
-    /* helmet (gold) */
-    c.fillStyle = '#c0a000';
-    px(lx + 4, ly + 2 + lBob, 8, 5);
-    px(lx + 6, ly + lBob, 4, 2);
-    /* helmet plume */
-    c.fillStyle = '#e02020';
-    px(lx + 2, ly - 2 + lBob, 2, 4);
-    px(lx, ly - 4 + lBob, 2, 4);
+    /* impact effects: a burst of sparks at the weapon tip, and a floating number */
+    const burst = (cx, cy, at, big) => {
+      const age = ph - at;
+      if (age < 0 || age > 18) return;
+      c.save();
+      c.globalAlpha = 1 - age / 18;
+      const rays = big ? 12 : 8, dist = age * (big ? 3.4 : 2.6) + 4;
+      const cols = ['#ffff80', '#ffffff', '#ffb040'];
+      const s = age < 8 ? 6 : 4;
+      for (let i = 0; i < rays; i++) {
+        const a = (i / rays) * Math.PI * 2 + (big ? 0.2 : 0);
+        c.fillStyle = cols[i % 3];
+        c.fillRect(Math.round(cx + Math.cos(a) * dist - s / 2), Math.round(cy + Math.sin(a) * dist - s / 2), s, s);
+      }
+      if (age < 6) {
+        c.fillStyle = '#ffffff';
+        const r = big ? 14 : 9;
+        c.fillRect(cx - 2, cy - r, 4, r * 2); c.fillRect(cx - r, cy - 2, r * 2, 4);
+      }
+      c.restore();
+    };
+    const floatText = (x, at, text, col) => {
+      const age = ph - at;
+      if (age < 2 || age > 45) return;
+      c.save();
+      c.globalAlpha = Math.min(1, (45 - age) / 20);
+      c.font = `10px ${FONT}`; c.textAlign = 'center';
+      c.lineWidth = 3; c.lineJoin = 'round'; c.strokeStyle = 'rgba(0,0,0,0.85)';
+      const y = Math.round(feetY - 100 - age * 0.28);
+      c.strokeText(text, Math.round(x), y);
+      c.fillStyle = col;
+      c.fillText(text, Math.round(x), y);
+      c.restore();
+    };
+    /* where each weapon tip is at the moment of impact (shoulder + arm + blade,
+       at the blow's lunge and strike angle) */
+    const lordTip = b => [mx - 58 + b.reach + 3 * P + 22 * P * Math.cos(b.strike), feetY - 19 * P + 22 * P * Math.sin(b.strike)];
+    const brigTip = b => [mx + 58 - b.reach - 4 * P - 23 * P * Math.cos(b.strike), feetY - 21 * P + 23 * P * Math.sin(b.strike)];
+    const [lx, ly] = lordTip(BLOW), [rx, ry] = brigTip(BLOW);
+    burst(lx, ly, LORD_ATK + HIT, false);
+    burst(rx, ry, BRIG_ATK + HIT, false);
+    const [cl, cy1] = lordTip(CLASH), [cr, cy2] = brigTip(CLASH);
+    burst((cl + cr) / 2, (cy1 + cy2) / 2, CLASH_ATK + HIT, true);
+    floatText(brigX, LORD_ATK + HIT, '-8', '#ffe060');
+    floatText(lordX, BRIG_ATK + HIT, '-6', '#ff6060');
+    floatText(mx, CLASH_ATK + HIT, 'CLASH!', '#ffd700');
 
-    /* eyes */
-    c.fillStyle = '#202020';
-    px(lx + 10, ly + 8 + lBob, 1, 1);
-
-    /* sword arm (extended, swinging) */
-    const sSwing = Math.sin(t * 0.15) * 3;
-    c.fillStyle = '#f0c890';
-    px(lx + 16, ly + 20 + lBob, 3, 3);
-    /* sword */
-    c.fillStyle = '#d0d0e0';
-    px(lx + 20, ly + 10 + lBob + sSwing, 2, 14);
-    px(lx + 18, ly + 8 + lBob + sSwing, 6, 2);
-    /* hilt */
-    c.fillStyle = '#c0a000';
-    px(lx + 18, ly + 22 + lBob, 6, 2);
-    /* blade gleam */
-    c.fillStyle = '#ffffff';
-    px(lx + 22, ly + 12 + lBob + sSwing, 1, 4);
-
-    /* shield arm */
-    c.fillStyle = '#3070d0';
-    px(lx, ly + 22 + lBob, 3, 6);
-    c.fillStyle = '#c0a000';
-    px(lx - 2, ly + 22 + lBob, 2, 5);
-
-    /* ── Red Brigand (right, facing left, axe raised) ── */
-    const rx = mx + 30, ry = my - 36;
-    const rBob = Math.sin(t * 0.12 + 1.5) * 2;
-
-    /* boots */
-    c.fillStyle = '#3a2a1a';
-    px(rx + 6, ry + 52 + rBob, 5, 4);
-    px(rx + 16, ry + 50 + rBob, 5, 6);
-
-    /* legs */
-    c.fillStyle = '#604020';
-    px(rx + 8, ry + 42 + rBob, 4, 10);
-    px(rx + 16, ry + 40 + rBob, 4, 10);
-
-    /* body (bigger — brigand is bulkier) */
-    c.fillStyle = '#904020';
-    px(rx + 4, ry + 22 + rBob, 12, 18);
-    /* belt */
-    c.fillStyle = '#604020';
-    px(rx + 4, ry + 36 + rBob, 12, 2);
-    c.fillStyle = '#c0a000';
-    px(rx + 8, ry + 36 + rBob, 4, 2);
-
-    /* head */
-    c.fillStyle = '#d0a870';
-    px(rx + 6, ry + 10 + rBob, 8, 7);
-    px(rx + 8, ry + 12 + rBob, 8, 5);
-
-    /* bandana */
-    c.fillStyle = '#c02020';
-    px(rx + 4, ry + 8 + rBob, 10, 4);
-    px(rx + 14, ry + 10 + rBob, 4, 2);
-
-    /* eyes (angry) */
-    c.fillStyle = '#202020';
-    px(rx + 6, ry + 14 + rBob, 2, 1);
-
-    /* mouth (snarl) */
-    c.fillStyle = '#202020';
-    px(rx + 6, ry + 16 + rBob, 3, 1);
-
-    /* axe arm (raised to strike) */
-    const aSwing = Math.sin(t * 0.15 + 1) * 4;
-    c.fillStyle = '#d0a870';
-    px(rx, ry + 22 + rBob, 4, 4);
-    /* axe handle */
-    c.fillStyle = '#6a4a2a';
-    px(rx - 6, ry + 4 + rBob + aSwing, 2, 20);
-    /* axe head */
-    c.fillStyle = '#808090';
-    px(rx - 12, ry + 2 + rBob + aSwing, 6, 4);
-    px(rx - 14, ry + 4 + rBob + aSwing, 8, 6);
-    px(rx - 12, ry + 10 + rBob + aSwing, 6, 2);
-    /* axe gleam */
-    c.fillStyle = '#c0c0d0';
-    px(rx - 14, ry + 6 + rBob + aSwing, 2, 2);
-
-    /* other arm */
-    c.fillStyle = '#d0a870';
-    px(rx + 18, ry + 26 + rBob, 3, 3);
-    /* fist */
-    c.fillStyle = '#d0a870';
-    px(rx + 20, ry + 24 + rBob, 3, 4);
+    c.restore();
   }
 
   /* ═══════════ MAP TILES ═══════════ */
