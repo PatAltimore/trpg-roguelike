@@ -222,7 +222,7 @@ export class Renderer {
     const units = [...g.players, ...g.enemies].filter(u => u.alive);
     /* timeline (ms): fade in while growing, sit fully expanded long enough to
        read, then fade out */
-    const GROW = 500, HOLD = 5000, FADE = 700;
+    const GROW = 500, HOLD = 10000, FADE = 700;
     const START = 0.75, END = 1.35; // text size multiplier at birth / fully grown
     const now = performance.now();
 
