@@ -218,7 +218,8 @@ export class Renderer {
     const toasts = g._toasts;
     if (!toasts || !toasts.length) return;
     const c = this.cx;
-    const mapW = COLS * TILE;
+    const mapW = COLS * TILE, mapH = ROWS * TILE;
+    const units = [...g.players, ...g.enemies].filter(u => u.alive);
     /* timeline (ms): fade in while growing, sit fully expanded long enough to
        read, then fade out */
     const GROW = 500, HOLD = 5000, FADE = 700;
@@ -231,7 +232,7 @@ export class Renderer {
 
     /* the map is drawn at a fixed size and then shrunk to fit a phone, so
        bump the text with the info pane's portrait scale to keep it legible */
-    const base = 16 * Math.max(1, this._sideRect.scale * 0.4);
+    const base = 11 * Math.max(1, this._sideRect.scale * 0.4);
     const maxW = mapW * 0.8;
     const placed = [];
 
@@ -270,13 +271,32 @@ export class Renderer {
       const w = Math.max(...t._lines.map(l => this._runsWidth(l)));
       const h = t._lines.length * lineH;
 
-      const cx = Math.min(mapW - w / 2 - 6, Math.max(w / 2 + 6, t.tx * TILE + TILE / 2));
-      let top = t.ty * TILE - 6 - h - 20 * (base / 16) * grow;
-      const rect = () => ({ x: cx - w / 2, y: top, w, h });
+      /* the fight fills these tiles; the text sits above or below them so it
+         never covers the fighters (and steers clear of other units too) */
+      const bx = (Math.min(t.tx, t.ox) + Math.max(t.tx, t.ox) + 1) * TILE / 2;
+      const by0 = Math.min(t.ty, t.oy) * TILE, by1 = (Math.max(t.ty, t.oy) + 1) * TILE;
+      const cx = Math.min(mapW - w / 2 - 6, Math.max(w / 2 + 6, bx));
+      const gap = 6 + 8 * (base / 11) * grow;   // drifts away from the fight as it grows
+      const rectAt = top => ({ x: cx - w / 2, y: top, w, h });
       const hits = r => placed.some(p => r.x < p.x + p.w && r.x + r.w > p.x && r.y < p.y + p.h && r.y + r.h > p.y);
-      for (let n = 0; n < 12 && hits(rect()); n++) top -= lineH * 0.5;
-      top = Math.max(4, top);
-      placed.push(rect());
+      const place = dir => {
+        let top = dir < 0 ? by0 - gap - h : by1 + gap;
+        for (let n = 0; n < 12 && hits(rectAt(top)); n++) top += dir * lineH * 0.5;
+        return top;
+      };
+      if (!t._side) {   // pick a side once, so the text doesn't jump if units move
+        const cost = top => {
+          const r = rectAt(top);
+          const off = Math.max(0, 2 - top) + Math.max(0, top + h - (mapH - 2));
+          const onUnit = units.filter(u => r.x < (u.x + 1) * TILE && r.x + r.w > u.x * TILE
+                                        && r.y < (u.y + 1) * TILE && r.y + r.h > u.y * TILE).length;
+          return off * 10 + onUnit * 100;
+        };
+        t._side = cost(place(1)) < cost(place(-1)) ? 1 : -1;   // ties go above
+      }
+      let top = place(t._side);
+      top = Math.max(2, Math.min(mapH - h - 2, top));
+      placed.push(rectAt(top));
 
       c.globalAlpha = Math.max(0, Math.min(1, alpha));
       c.lineWidth = Math.max(3, fs * 0.3);

@@ -8,6 +8,7 @@ import {
 import { GameMap, reachable }    from './map.js';
 import { spawnParty, spawnEnemies, DRAFT_POOL, CLASS_INFO, Unit, resetNames, markNamesUsed } from './units.js';
 import { resolve, forecast, canCounter, inRange } from './combat.js';
+import { strikeLine, fallsLine } from './commentary.js';
 import { planEnemyTurn }         from './ai.js';
 import { Renderer }              from './renderer.js';
 import { SFX, isMuted, toggleMute } from './audio.js';
@@ -102,7 +103,7 @@ class Game {
 
     /* play log */
     this.playLog     = [];   // [{text, color, snap}] — capped at 80 entries
-    this._toasts     = [];   // floating battle text — [{text, color, tx, ty, born}]
+    this._toasts     = [];   // floating battle text — [{text, color, tx, ty, ox, oy, born}]
     this.snapshots   = [];   // game-state snapshots for rewind
     this.rewindsLeft = 3;    // charges remaining this level
     this._historyView = null; // {snap, entry} when browsing history, null otherwise
@@ -168,14 +169,15 @@ class Game {
   }
 
   /* `at` — a unit or {x, y} tile; when given, the entry also floats over that
-     tile as battle text (see Renderer._battleToasts). */
-  _addLog(text, color = '#a0a0c0', at = null) {
+     tile as battle text (see Renderer._battleToasts); `also` is the other fighter,
+     so the text can keep clear of both. */
+  _addLog(text, color = '#a0a0c0', at = null, also = null) {
     const runs = this._nameRuns(text);
     /* capture the exact playfield state before this entry is added so
        history view can show precisely what the board looked like at this moment */
     this.playLog.push({ text, runs, color, snap: this._captureState() });
     if (this.playLog.length > 120) this.playLog.shift();
-    if (at) this._toasts.push({ text, runs, color, tx: at.x, ty: at.y, born: performance.now() });
+    if (at) this._toasts.push({ text, runs, color, tx: at.x, ty: at.y, ox: also ? also.x : at.x, oy: also ? also.y : at.y, born: performance.now() });
   }
 
   /* Give a player unit XP; a level-up fully restores its HP (see Unit.levelUp). */
@@ -820,19 +822,11 @@ class Game {
     if (this._combatIdx < this._combatLog.length) {
       const entry = this._combatLog[this._combatIdx++];
       if (entry.dmg > 0) entry.tgt.takeDmg(entry.dmg);
-      if (!entry.hit) {
-        SFX.miss();
-        this._addLog(`${entry.src.name}: Miss!`,
-          entry.src.isPlayer ? '#8080ff' : '#ff8080', entry.tgt);
-      } else if (entry.crit) {
-        SFX.crit();
-        this._addLog(`${entry.src.name} CRIT! ${entry.dmg} dmg`,
-          entry.src.isPlayer ? '#c0c0ff' : '#ffc0c0', entry.tgt);
-      } else {
-        SFX.hit();
-        this._addLog(`${entry.src.name} 💥 ${entry.tgt.name}: ${entry.dmg} dmg`,
-          entry.src.isPlayer ? '#8080ff' : '#ff8080', entry.tgt);
-      }
+      const said = strikeLine(entry, this._combatLog.slice(0, this._combatIdx - 1), this._combatAtk);
+      const col = entry.src.isPlayer ? (entry.crit ? '#c0c0ff' : '#8080ff')
+                                      : (entry.crit ? '#ffc0c0' : '#ff8080');
+      if (!entry.hit) SFX.miss(); else if (entry.crit) SFX.crit(); else SFX.hit();
+      this._addLog(said, col, entry.tgt, entry.src);
       /* XP for the player's strikes — damage dealt, plus a bonus for the kill */
       if (entry.src.isPlayer && entry.hit && !entry.tgt.isPlayer) {
         let xp = Math.max(XP_MIN_HIT, entry.dmg);
@@ -854,7 +848,7 @@ class Game {
     let posted = false;   // any kill / loot lines that need reading time
     /* log kills before filtering */
     for (const u of [...this.enemies, ...this.players]) {
-      if (!u.alive) { this._addLog(`${u.name} falls!`, '#ffd700', u); posted = true; }
+      if (!u.alive) { this._addLog(fallsLine(u), '#ffd700', u); posted = true; }
     }
     /* handle items from dead units */
     let itemsDropped = false;
