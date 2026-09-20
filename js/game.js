@@ -886,10 +886,17 @@ class Game {
         itemsDropped = true;
       }
     }
+    const warlord = this.enemies.find(e => !e.alive && e.key === 'WARLORD');
     this.enemies = this.enemies.filter(e => e.alive);
     this.players = this.players.filter(p => p.alive);
     /* sound for kills */
     if (this.enemies.length < hadEnemies || this.players.length < hadPlayers) SFX.kill();
+    /* the warlord's fall breaks the enemy army — the rest flee and the battle is won */
+    if (warlord && this.enemies.length && this.players.some(p => p.key === 'LORD')) {
+      this._addLog('Warlord defeated! The enemy flees!', '#ffd700', warlord);
+      this.enemies = [];
+      posted = true;
+    }
     /* tutorial tips */
     if (this.tut && this.enemies.length < hadEnemies) this._tutShow('first_kill');
     if (this.tut && itemsDropped) this._tutShow('item_drop');
@@ -1407,6 +1414,7 @@ class Game {
     this.roster = alive.map(p => p.key);
     for (const p of alive) p.hp = p.maxHp;
     this.floor = 1;
+    SFX.titleMelody();
     this._startLevel();
   }
 

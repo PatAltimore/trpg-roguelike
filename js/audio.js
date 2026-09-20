@@ -8,11 +8,32 @@ let muted = false;
 export function isMuted() { return muted; }
 export function toggleMute() { muted = !muted; return muted; }
 
+const AC = window.AudioContext || window.webkitAudioContext;
+
+/* Browsers suspend the context when the page is backgrounded (Safari reports
+   'interrupted', and may close it outright), so anything not 'running' needs
+   a resume — or a fresh context — before sound comes back. */
+function revive() {
+  if (!ctx) return;
+  if (ctx.state === 'closed') { ctx = null; return; }
+  if (ctx.state !== 'running') ctx.resume().catch(() => {});
+}
+
 function ensure() {
   if (muted) return null;
-  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-  if (ctx.state === 'suspended') ctx.resume();
+  if (ctx && ctx.state === 'closed') ctx = null;
+  if (!ctx) ctx = new AC();
+  if (ctx.state !== 'running') ctx.resume().catch(() => {});
   return ctx;
+}
+
+/* Wake the audio back up when the player returns to the tab, and on any tap or
+   key press (mobile browsers only allow resuming from a user gesture). */
+document.addEventListener('visibilitychange', () => { if (!document.hidden) revive(); });
+window.addEventListener('pageshow', revive);
+window.addEventListener('focus', revive);
+for (const ev of ['pointerdown', 'touchend', 'keydown']) {
+  window.addEventListener(ev, revive, { capture: true, passive: true });
 }
 
 function osc(type, freq, dur, vol = 0.15, detune = 0) {
