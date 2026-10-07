@@ -238,14 +238,42 @@ export class GameMap {
     start.sort((a, b) => a.d - b.d);
     this.playerSpawns = start.slice(0, 8).map(({ x, y }) => ({ x, y }));
 
-    /* enemies: beyond the barrier, or the right half of the map */
+    /* How far a player must walk to stand next to each tile: the cheapest
+       path from any start tile to a neighbour of it. Units move 5, so
+       reach <= 5 means someone can strike that tile on turn one. */
+    const fromStart = this.playerSpawns.map(s => pathDistances(this, s.x, s.y));
+    const reach = (x, y) => {
+      let best = Infinity;
+      for (const d of fromStart)
+        for (const [dx, dy] of DIRS) {
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && nx < COLS && ny >= 0 && ny < ROWS) best = Math.min(best, d[ny][nx]);
+        }
+      return best;
+    };
+    const FIRST_TURN = 5;
+
+    /* enemies: beyond the barrier, or the right half of the map — and out of
+       first-turn reach, so closing the distance takes some thought */
     const minX = barrier ? Math.max(barrier.maxX + 2, 7) : 7;
-    const cands = [];
+    const cands = [], near = [];
     for (let y = 0; y < ROWS; y++)
-      for (let x = minX; x < COLS; x++) {
+      for (let x = START_W; x < COLS; x++) {
         const t = this.tiles[y][x];
-        if (SPAWNABLE.has(t)) cands.push({ x, y, def: t.def });
+        if (!SPAWNABLE.has(t)) continue;
+        const r = reach(x, y);
+        const c = { x, y, def: t.def, r };
+        if (x >= minX && r > FIRST_TURN + 2) cands.push(c);
+        if (r >= FIRST_TURN - 2 && r <= FIRST_TURN) near.push(c);
       }
+    /* too cramped a map to leave the rest out of reach: fall back to any far tile */
+    if (cands.length < 12)
+      for (let y = 0; y < ROWS; y++)
+        for (let x = minX; x < COLS; x++) {
+          const t = this.tiles[y][x];
+          if (SPAWNABLE.has(t) && !cands.some(c => c.x === x && c.y === y))
+            cands.push({ x, y, def: t.def, r: reach(x, y) });
+        }
 
     const picked = [];
     const take = (c, cls) => {
@@ -253,13 +281,22 @@ export class GameMap {
       if (cls) spawn.cls = cls;
       this.enemySpawns.push(spawn);
       picked.push(c);
-      cands.splice(cands.indexOf(c), 1);
+      const i = cands.findIndex(o => o.x === c.x && o.y === c.y);
+      if (i >= 0) cands.splice(i, 1);
     };
     /* the boss goes first so a small enemy count can never cut it off */
     if (this._floorTheme === 'boss' && cands.length) {
       const mid = ROWS / 2;
       const score = c => c.x - Math.abs(c.y - mid) * 0.3;
       take(cands.reduce((a, b) => (score(b) > score(a) ? b : a)), 'WARLORD');
+    }
+    /* then one or two vanguard enemies a first-turn move-and-attack away, set
+       apart from each other so there's a choice of target. The rest of the
+       army stays back. */
+    for (let n = Math.random() < 0.6 ? 2 : 1; n > 0 && near.length; n--) {
+      const ok = near.filter(c => this.enemySpawns.every(s => Math.abs(s.x - c.x) + Math.abs(s.y - c.y) >= 3));
+      if (!ok.length) break;
+      take(ok.reduce((a, b) => (b.def + Math.random() * 2 > a.def + Math.random() * 2 ? b : a)));
     }
     /* then farthest-point order, favouring good cover, so any prefix of the
        list (spawnEnemies takes as many as the difficulty asks for) is spread
