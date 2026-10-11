@@ -87,17 +87,12 @@ npx serve -l 8080
 
 Then open `http://localhost:8080` in a browser.
 
-## Deploy to Azure Static Web Apps
+## Deploy to GitHub Pages
 
-1. Create an **Azure Static Web App** resource in the Azure portal
-2. Connect it to this GitHub repository
-3. Set the following build configuration:
-   - **App location**: `/`
-   - **Output location**: `/`
-   - **API location**: *(leave empty)*
-4. Azure will auto-deploy on every push via GitHub Actions
+1. In the repository, go to **Settings → Pages** and set **Source** to **GitHub Actions**
+2. Push to `main` — the `.github/workflows/pages.yml` workflow publishes `index.html` and `js/` automatically
 
-The `staticwebapp.config.json` is already configured for routing.
+The site is served at `https://<user>.github.io/<repo>/`.
 
 ## Tech Stack
 

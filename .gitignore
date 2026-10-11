@@ -24,5 +24,3 @@ Desktop.ini
 dist/
 build/
 
-# Azure
-.azure/
