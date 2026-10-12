@@ -1,6 +1,8 @@
 # Emblem Tactics – Roguelike TRPG
 
-A tactical RPG with procedurally generated levels, inspired by Fire Emblem and roguelike games. Built with pure HTML5 Canvas and JavaScript — no dependencies.
+A tactical RPG with procedurally generated levels, inspired by Fire Emblem and roguelike games.
+
+Try the [demo](https://pataltimore.github.io/trpg-roguelike/).
 
 ## Gameplay
 
