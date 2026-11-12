@@ -16,6 +16,9 @@ Try the [demo](https://pataltimore.github.io/trpg-roguelike/).
 - **Combat system**: Hit%, damage, critical hits, double attacks (speed-based), counter-attacks
 - **Enemy AI**: Mix of aggressive and guard-mode enemies with threat range awareness
 
+### 2D and 3D views
+The map can be drawn flat (2D) or as a low-poly **3D isometric** board. Use the **2D | 3D** switch in the map's bottom-right corner, or press **V**. In 3D, the arrow buttons (or **Q** / **E**) rotate the board in 90° steps. Clicking, hovering, move/attack ranges and battle text all work the same in both views, and your choice is remembered. The 3D view loads [three.js](https://threejs.org) from a CDN on first use; if it can't load, the game stays in 2D.
+
 ## Classes
 
 ### Player Classes
@@ -99,6 +102,7 @@ The site is served at `https://<user>.github.io/<repo>/`.
 ## Tech Stack
 
 - HTML5 Canvas for rendering (8-bit pixel art style)
+- three.js (loaded on demand from a CDN) for the optional 3D isometric view
 - Vanilla ES Modules (no build step, no dependencies)
 - Web Audio API for procedural 8-bit sound effects
 - Press Start 2P font for retro aesthetics

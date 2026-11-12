@@ -8,6 +8,7 @@ import {
 import { forecast, canCounter, inRange } from './combat.js';
 import { isMuted } from './audio.js';
 import { CLASS_INFO, DRAFT_POOL, XP_PER_LEVEL } from './units.js';
+import { View3D, loadThree } from './view3d.js';
 
 const FONT = '"Press Start 2P", monospace';
 
@@ -78,6 +79,43 @@ export class Renderer {
     this._sideRect = { x: COLS * TILE, y: 0, w: SIDEBAR_W, h: CANVAS_H, scale: 1 }; /* current info-pane rect */
     this._useCoverFit = false; /* true in portrait gameplay — see _applyLayout */
     this.onResize  = null; /* set by Game — called when the canvas backing store is resized */
+
+    /* ── 3D isometric view (see view3d.js) ──
+       mode3d is the player's choice; view3d only exists once three.js has
+       loaded, and the flat 2D map is drawn whenever it is not ready. */
+    this.mode3d = false;
+    try { this.mode3d = localStorage.getItem('emblemtactics_view') === '3d'; } catch (e) { /* no storage */ }
+    this.view3d = null;
+    this._v3state = 'idle';   /* idle | loading | ready | failed */
+    this._v3 = null;          /* the View3D in use this frame, or null while drawing 2D */
+    this._v3units = [];       /* units drawn by the 3D scene this frame (for HP bars / labels) */
+    this._viewBtns = null;    /* {mode, left, right} bounds of the 2D/3D switch and rotate buttons */
+  }
+
+  /* ═══════════ 2D / 3D SWITCH ═══════════ */
+  setMode3d(on) {
+    this.mode3d = on;
+    try { localStorage.setItem('emblemtactics_view', on ? '3d' : '2d'); } catch (e) { /* no storage */ }
+  }
+
+  rotateView(dir) { if (this._v3) this._v3.rotate(dir); }
+
+  /* The View3D to draw this frame, or null to fall back to the flat map.
+     Starts loading three.js the first time 3D is wanted. */
+  _active3d(gameplay) {
+    if (!gameplay || !this.mode3d) return null;
+    if (this._v3state === 'idle') {
+      this._v3state = 'loading';
+      loadThree().then(T => {
+        this.view3d = new View3D(T, this.cv);
+        this._v3state = 'ready';
+      }).catch(err => {
+        console.warn('3D view unavailable:', err);
+        this._v3state = 'failed';
+        this.mode3d = false;
+      });
+    }
+    return this._v3state === 'ready' ? this.view3d : null;
   }
 
   tick() { this.t++; }
@@ -167,6 +205,12 @@ export class Renderer {
     if (this._applyLayout(g) && this.onResize) this.onResize();
     c.clearRect(0, 0, this.cv.width, this.cv.height);
 
+    const gameplay = g.state !== S_TITLE && g.state !== S_DRAFT &&
+                     g.state !== S_BONUS && g.state !== S_VICTORY;
+    this._v3 = this._active3d(gameplay);
+    if (this.view3d) this.view3d.show(!!this._v3);
+    this._viewBtns = null;
+
     if (g.state === S_TITLE) {
       this._title(g);
       this._soundToggle(0, this._titlePortrait ? 12 : CANVAS_H - 40, this.cv.width);
@@ -176,7 +220,8 @@ export class Renderer {
     if (g.state === S_BONUS)   { this._bonusScreen(g); return; }
     if (g.state === S_VICTORY) { this._victoryScreen(g); return; }
 
-    this._map(g.map);
+    if (this._v3) this._v3units = this._scene3d(g, this._v3);
+    else this._map(g.map);
 
     /* transition overlays — skip normal highlights/units */
     if (g.state === S_TRANS_OUT || g.state === S_TRANS_IN) {
@@ -188,19 +233,27 @@ export class Renderer {
     /* ── history view — frozen snapshot of the past ── */
     if (g._historyView) {
       const snap = g._historyView.snap;
-      this._droppedItemsList(snap.droppedItems);
-      this._unitsFromSnap(snap);
+      if (this._v3) this._unitLabels3d(g);
+      else {
+        this._droppedItemsList(snap.droppedItems);
+        this._unitsFromSnap(snap);
+      }
       this._historyOverlay(g);
+      this._viewSwitch(g);
       this._sidebar(g);
       return;
     }
 
-    this._highlights(g);
-    this._droppedItems(g);
-    this._units(g);
-
-    this._cursor(g);
+    if (this._v3) {
+      this._unitLabels3d(g);
+    } else {
+      this._highlights(g);
+      this._droppedItems(g);
+      this._units(g);
+      this._cursor(g);
+    }
     this._battleToasts(g);
+    this._viewSwitch(g);
     this._sidebar(g);
     if (g.state === S_ACTION_MENU) this._menu(g);
     if (g.state === S_ATK_SELECT) this._atkPrompt();
@@ -208,6 +261,105 @@ export class Renderer {
     if (g.state === S_COMBAT_ANIM && g._enemyCombatPending) this._enemyAtkBanner();
     this._tutBanner(g);
     if (g.state === S_WIN || g.state === S_LOSE) this._overlay(g);
+  }
+
+  /* ═══════════ 3D SCENE ═══════════
+     Feeds the current board to the 3D view and returns the units it draws. */
+  _scene3d(g, v3) {
+    let units, items = [], opts = {};
+    if (g.state === S_TRANS_OUT || g.state === S_TRANS_IN) {
+      units = g.trans ? g.trans.walkers.map(w => w.unit).filter(u => u.alive) : [];
+    } else if (g._historyView) {
+      const snap = g._historyView.snap;
+      units = this._snapUnits(snap);
+      items = snap.droppedItems || [];
+    } else {
+      units = [...g.players, ...g.enemies].filter(u => u.alive);
+      items = g.droppedItems || [];
+      opts = {
+        sel: g.sel, cur: g.cur, moveRange: g.moveRange, atkRange: g.atkRange,
+        atkAnim: g.state === S_COMBAT_ANIM ? { atk: g._combatAtk, def: g._combatDef } : null,
+        targets: g.state === S_ATK_SELECT && g.sel
+          ? units.filter(u => !u.isPlayer && inRange(g.sel, u.x, u.y)) : [],
+      };
+    }
+    v3.frame(g.map, units, items, opts);
+    return units;
+  }
+
+  /* HP bar and class letter floating over each 3D unit */
+  _unitLabels3d(g) {
+    const v3 = this._v3, c = this.cx, S = v3.unitPx;
+    const bw = S * 0.8, bh = Math.max(4, S * 0.1);
+    const units = this._v3units.slice().sort((a, b) => a.x + a.y - b.x - b.y);
+    for (const u of units) {
+      const p = v3.unitAnchor(u, 1.0);
+      if (!p) continue;
+      const pct = u.hp / u.maxHp;
+      const x = p.x - bw / 2, y = p.y - bh - 3;
+      c.fillStyle = 'rgba(0,0,0,0.75)'; c.fillRect(x - 1, y - 1, bw + 2, bh + 2);
+      c.fillStyle = C.HP_BG; c.fillRect(x, y, bw, bh);
+      c.fillStyle = pct > 0.5 ? C.HP_OK : pct > 0.25 ? C.HP_MID : C.HP_LOW;
+      c.fillRect(x, y, Math.floor(bw * pct), bh);
+
+      const selected = g.sel === u;
+      const size = Math.round(S * (selected ? 0.52 : 0.34));
+      c.font = `bold ${size}px monospace`; c.textAlign = 'center'; c.textBaseline = 'bottom';
+      c.lineWidth = Math.max(2, Math.round(S * (selected ? 0.08 : 0.05)));
+      c.strokeStyle = 'rgba(0,0,0,0.9)';
+      c.strokeText(u.lbl, p.x, y - 2);
+      c.fillStyle = u.isPlayer ? '#fff' : '#ffd0d0';
+      c.fillText(u.lbl, p.x, y - 2);
+      c.textBaseline = 'alphabetic';
+    }
+  }
+
+  /* 2D | 3D switch (and, in 3D, rotate buttons) in the map's bottom-right corner */
+  _viewSwitch(g) {
+    if (g.state === S_WIN || g.state === S_LOSE) return;
+    const c = this.cx;
+    const k = Math.max(1, this._sideRect.scale * 0.9);
+    const mapW = COLS * TILE, mapH = ROWS * TILE;
+    const bh = 24 * k, hw = 30 * k, gap = 6 * k, edge = 8 * k;
+    const mx = mapW - edge - hw * 2, my = mapH - edge - bh;
+    const on3d = !!this._v3;
+
+    c.save();
+    c.textAlign = 'center';
+    c.font = `${7 * k}px ${FONT}`;
+    [['2D', mx, !on3d], ['3D', mx + hw, on3d]].forEach(([label, x, active]) => {
+      c.fillStyle = active ? '#2a3a80' : '#101020'; c.fillRect(x, my, hw, bh);
+      c.strokeStyle = active ? '#80a0ff' : '#404060'; c.lineWidth = 1; c.strokeRect(x, my, hw, bh);
+      c.fillStyle = active ? '#ffffff' : '#7080a0';
+      c.fillText(label, x + hw / 2, my + bh / 2 + 3 * k);
+    });
+    this._viewBtns = { mode: { x: mx, y: my, w: hw * 2, h: bh }, left: null, right: null };
+
+    if (on3d) {
+      const arrow = (bx, dir) => {
+        c.fillStyle = '#101020'; c.fillRect(bx, my, bh, bh);
+        c.strokeStyle = '#404060'; c.lineWidth = 1; c.strokeRect(bx, my, bh, bh);
+        c.save();
+        c.translate(bx + bh / 2, my + bh / 2);
+        c.scale(dir, 1);
+        const r = bh * 0.27;
+        c.strokeStyle = '#80a0ff'; c.fillStyle = '#80a0ff'; c.lineWidth = Math.max(2, k * 1.5);
+        c.beginPath(); c.arc(0, 0, r, -2.3, 0.9); c.stroke();
+        const ca = Math.cos(0.9), sa = Math.sin(0.9), h = bh * 0.2;
+        const ex = ca * r, ey = sa * r;      /* arc end; tangent (-sa, ca), outward normal (ca, sa) */
+        c.beginPath();
+        c.moveTo(ex - sa * h * 1.2, ey + ca * h * 1.2);
+        c.lineTo(ex + ca * h * 0.8, ey + sa * h * 0.8);
+        c.lineTo(ex - ca * h * 0.8, ey - sa * h * 0.8);
+        c.closePath(); c.fill();
+        c.restore();
+      };
+      const rx = mx - gap - bh, lx = rx - gap - bh;
+      arrow(lx, -1); arrow(rx, 1);
+      this._viewBtns.left  = { x: lx, y: my, w: bh, h: bh };
+      this._viewBtns.right = { x: rx, y: my, w: bh, h: bh };
+    }
+    c.restore();
   }
 
   /* ═══════════ BATTLE TOASTS ═══════════
@@ -273,8 +425,7 @@ export class Renderer {
 
       /* the fight fills these tiles; the text sits above or below them so it
          never covers the fighters (and steers clear of other units too) */
-      const bx = (Math.min(t.tx, t.ox) + Math.max(t.tx, t.ox) + 1) * TILE / 2;
-      const by0 = Math.min(t.ty, t.oy) * TILE, by1 = (Math.max(t.ty, t.oy) + 1) * TILE;
+      const { bx, by0, by1 } = this._fightBox(t);
       const cx = Math.min(mapW - w / 2 - 6, Math.max(w / 2 + 6, bx));
       const gap = 6 + 8 * (base / 11) * grow;   // drifts away from the fight as it grows
       const rectAt = top => ({ x: cx - w / 2, y: top, w, h });
@@ -288,8 +439,10 @@ export class Renderer {
         const cost = top => {
           const r = rectAt(top);
           const off = Math.max(0, 2 - top) + Math.max(0, top + h - (mapH - 2));
-          const onUnit = units.filter(u => r.x < (u.x + 1) * TILE && r.x + r.w > u.x * TILE
-                                        && r.y < (u.y + 1) * TILE && r.y + r.h > u.y * TILE).length;
+          const onUnit = units.filter(u => {
+            const b = this._unitBox(u);
+            return r.x < b.x1 && r.x + r.w > b.x0 && r.y < b.y1 && r.y + r.h > b.y0;
+          }).length;
           return off * 10 + onUnit * 100;
         };
         t._side = cost(place(1)) < cost(place(-1)) ? 1 : -1;   // ties go above
@@ -304,6 +457,27 @@ export class Renderer {
       t._lines.forEach((runs, i) => this._fillRuns(runs, cx, top + fs + i * lineH, 'center', t.color, true));
     }
     c.restore();
+  }
+
+  /* where a battle-text entry's fight sits on the map canvas: horizontal
+     centre and top/bottom edges of the fighters. The 2D map is a plain grid;
+     in 3D the tiles are projected, and the box covers the units standing on them. */
+  _fightBox(t) {
+    const v3 = this._v3;
+    if (!v3) {
+      return { bx: (Math.min(t.tx, t.ox) + Math.max(t.tx, t.ox) + 1) * TILE / 2,
+               by0: Math.min(t.ty, t.oy) * TILE, by1: (Math.max(t.ty, t.oy) + 1) * TILE };
+    }
+    const a = v3.tilePoint(t.tx, t.ty), b = v3.tilePoint(t.ox, t.oy), S = v3.unitPx;
+    return { bx: (a.x + b.x) / 2, by0: Math.min(a.y, b.y) - S * 1.25, by1: Math.max(a.y, b.y) + S * 0.35 };
+  }
+
+  /* the screen box a unit occupies */
+  _unitBox(u) {
+    const v3 = this._v3;
+    if (!v3) return { x0: u.x * TILE, x1: (u.x + 1) * TILE, y0: u.y * TILE, y1: (u.y + 1) * TILE };
+    const p = v3.tilePoint(u.x, u.y), S = v3.unitPx;
+    return { x0: p.x - S * 0.5, x1: p.x + S * 0.5, y0: p.y - S * 1.25, y1: p.y + S * 0.35 };
   }
 
   /* ── coloured text runs [{t, c?}] — unit names carry their own colour, the
@@ -862,19 +1036,24 @@ export class Renderer {
   /* Renders units from a snapshot state without touching live unit objects */
   _unitsFromSnap(snap) {
     const fakeG = { sel: null, state: 0, _combatDef: null };
-    const allStates = [...snap.playerStates, ...snap.enemyStates];
-    for (const s of allStates) {
+    for (const u of this._snapUnits(snap)) this._unit(u, fakeG);
+  }
+
+  /* plain render proxies with historical position/hp, one per living unit */
+  _snapUnits(snap) {
+    const out = [];
+    for (const s of [...snap.playerStates, ...snap.enemyStates]) {
       if (!s.alive) continue;
-      /* build a plain render proxy with historical position/hp */
-      const u = {
+      out.push({
+        id: s.unit.id,
         x: s.x, y: s.y,
         hp: s.hp, maxHp: s.unit.maxHp,
         hue: s.unit.hue, lbl: s.unit.lbl,
         key: s.unit.key, isPlayer: s.unit.isPlayer,
         done: s.moved && s.acted,
-      };
-      this._unit(u, fakeG);
+      });
     }
+    return out;
   }
 
   /* ── History map overlay (dim tint + banner with nav buttons) ── */
@@ -1761,7 +1940,8 @@ export class Renderer {
     c.beginPath();
     c.rect(0, 0, COLS * TILE, mapH);
     c.clip();
-    for (const w of tr.walkers) {
+    if (this._v3) this._unitLabels3d(g);
+    else for (const w of tr.walkers) {
       if (w.unit.alive) this._unit(w.unit, g);
     }
     c.restore();

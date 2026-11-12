@@ -344,9 +344,37 @@ class Game {
              py: (e.clientY - r.top)  * (this.cv.height / r.height) };
   }
 
+  /* the map tile under a canvas pixel ({x:-1,y:-1} when none). In the 3D view
+     the board is projected, so the renderer's picking is asked instead. */
+  _tileAt(px, py) {
+    const v3 = this.ren._v3;
+    if (v3) {
+      const t = v3.pick(px, py);
+      return t ? { cx: t.x, cy: t.y } : { cx: -1, cy: -1 };
+    }
+    return { cx: Math.floor(px / TILE), cy: Math.floor(py / TILE) };
+  }
+
+  /* 2D | 3D switch and rotate buttons — true if the click was one of them */
+  _clickViewBtns(px, py) {
+    const b = this.ren._viewBtns;
+    if (!b) return false;
+    const hit = r => r && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+    if (hit(b.mode)) {
+      const left = px < b.mode.x + b.mode.w / 2;     /* left half = 2D, right half = 3D */
+      if (left === !this.ren.mode3d) return true;
+      this.ren.setMode3d(!left);
+      SFX.select();
+      return true;
+    }
+    if (hit(b.left))  { this.ren.rotateView(-1); SFX.select(); return true; }
+    if (hit(b.right)) { this.ren.rotateView(1);  SFX.select(); return true; }
+    return false;
+  }
+
   _hover(e) {
     const { px, py } = this._px(e);
-    const cx = Math.floor(px / TILE), cy = Math.floor(py / TILE);
+    const { cx, cy } = this._tileAt(px, py);
     if (cx >= 0 && cx < COLS && cy >= 0 && cy < ROWS) {
       this.cur = { x: cx, y: cy };
       if (this.state === S_ATK_SELECT && this.sel) this._updatePreview(cx, cy);
@@ -362,11 +390,14 @@ class Game {
 
   _click(e) {
     const { px, py } = this._px(e);
-    const cx = Math.floor(px / TILE), cy = Math.floor(py / TILE);
+    const { cx, cy } = this._tileAt(px, py);
 
     /* sound toggle — always available */
     const sb = this.ren.soundBtn;
     if (sb && px >= sb.x && px <= sb.x + sb.w && py >= sb.y && py <= sb.y + sb.h) { toggleMute(); return; }
+
+    /* 2D / 3D view switch — always available during play */
+    if (this._clickViewBtns(px, py)) return;
 
     /* ── history view intercepts all clicks ── */
     if (this._historyView) {
@@ -693,6 +724,14 @@ class Game {
   /* ── keyboard ── */
   _keyDown(e) {
     if (e.key === 'Escape') { this._cancel(); return; }
+
+    /* view: V flips between the flat map and the 3D isometric view, Q / E rotate the 3D board */
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && this.state !== S_TITLE) {
+      const k = e.key.toLowerCase();
+      if (k === 'v') { this.ren.setMode3d(!this.ren.mode3d); return; }
+      if (k === 'q') { this.ren.rotateView(-1); return; }
+      if (k === 'e') { this.ren.rotateView(1); return; }
+    }
 
     /* arrow keys navigate history entries when the log is in history view */
     if (this._historyView && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
