@@ -11,16 +11,16 @@ const between = (lo, hi) => lo + rnd(hi - lo + 1);
 /* Player start zone: the leftmost columns. */
 const START_W = 3;
 
-/* Per-theme feature budgets. Blob counts are [min, max]. `river` is the
+/* Per-theme feature budgets. Blob counts (and `wall` segment counts) are [min, max]. `river` is the
    chance the map is split by a river (bridge + ford); `ridge` splits it with
    a mountain range that only a couple of passes cut through. */
 const THEMES = {
-  forest:     { river: 0.35, mountain: [0, 1], lake: [0, 1], forest: [5, 7], hill: [2, 3], swamp: [1, 2], forts: 1 },
-  fortress:   { river: 0.60, mountain: [3, 4], lake: [0, 0], forest: [1, 2], hill: [2, 3], swamp: [0, 0], forts: 2 },
-  gauntlet:   { ridge: true, mountain: [0, 1], lake: [0, 0], forest: [2, 3], hill: [2, 3], swamp: [0, 1], forts: 1 },
-  boss:       { river: 0.40, mountain: [2, 3], lake: [1, 2], forest: [1, 2], hill: [1, 3], swamp: [0, 1], forts: 1 },
-  open_field: { river: 0.50, mountain: [0, 1], lake: [0, 1], forest: [2, 3], hill: [2, 3], swamp: [0, 1], forts: 1 },
-  mixed:      { river: 0.75, mountain: [1, 2], lake: [1, 1], forest: [3, 4], hill: [2, 3], swamp: [1, 1], forts: 1 },
+  forest:     { river: 0.35, mountain: [0, 1], lake: [0, 1], forest: [5, 7], hill: [2, 3], swamp: [1, 2], wall: [0, 1], forts: 1 },
+  fortress:   { river: 0.60, mountain: [3, 4], lake: [0, 0], forest: [1, 2], hill: [2, 3], swamp: [0, 0], wall: [3, 4], forts: 2 },
+  gauntlet:   { ridge: true, mountain: [0, 1], lake: [0, 0], forest: [2, 3], hill: [2, 3], swamp: [0, 1], wall: [1, 2], forts: 1 },
+  boss:       { river: 0.40, mountain: [2, 3], lake: [1, 2], forest: [1, 2], hill: [1, 3], swamp: [0, 1], wall: [2, 3], forts: 1 },
+  open_field: { river: 0.50, mountain: [0, 1], lake: [0, 1], forest: [2, 3], hill: [2, 3], swamp: [0, 1], wall: [1, 2], forts: 1 },
+  mixed:      { river: 0.75, mountain: [1, 2], lake: [1, 1], forest: [3, 4], hill: [2, 3], swamp: [1, 1], wall: [1, 2], forts: 1 },
 };
 
 /* Terrain enemies may start on — never hazards or crossings. */
@@ -36,6 +36,8 @@ const SPAWNABLE = new Set([T_PLAIN, T_FOREST, T_HILL, T_FORT, T_ROAD]);
      • ridge   — the gauntlet's mountain range with a few passes: the one
                  floor where a chokepoint is the point
      • mountains and lakes block movement and make lanes and flanks
+     • wall segments — short ruined walls, some L-shaped — do the same on
+       open ground
      • forest, hill (best cover), swamp (slow, easy to hit) and forts (heal)
    Players start on the left; the map is randomly flipped top-to-bottom.
    Every attempt is checked for connectivity, with a bare field as fallback. */
@@ -58,7 +60,7 @@ export class GameMap {
   moveCost(x, y) { return this.at(x, y).cost; }
 
   /* ═══════════ TUTORIAL ═══════════
-     Hand-crafted 3-room map with progressive teaching:
+     Hand-crafted 3-area map with progressive teaching:
        Room A → movement basics (safe, open)
        Room B → terrain & weapon triangle (forests, varied enemies)
        Room C → forts & ranged threats (risk/reward positioning)     */
@@ -75,8 +77,9 @@ export class GameMap {
       'WWWWWWWW...T.W',
       'WWWWWWWWWWWWWW',
     ];
-    const CH = { W: T_WALL, '.': T_PLAIN, R: T_ROAD, F: T_FOREST, T: T_FORT };
-    this.tiles = MAP.map(row => [...row].map(ch => CH[ch] || T_WALL));
+    /* the 'W' cells stay grass — the surrounding stone walls hid the units in the 3D view */
+    const CH = { W: T_PLAIN, '.': T_PLAIN, R: T_ROAD, F: T_FOREST, T: T_FORT };
+    this.tiles = MAP.map(row => [...row].map(ch => CH[ch] || T_PLAIN));
     this.playerSpawns = [
       { x: 2, y: 1 }, { x: 3, y: 1 }, { x: 4, y: 1 },
       { x: 2, y: 2 }, { x: 3, y: 2 }, { x: 4, y: 2 },
@@ -124,6 +127,7 @@ export class GameMap {
       for (let i = between(...P.swamp); i > 0; i--)    this._blob(T_SWAMP,    between(3, 4), START_W);
       for (let i = between(...P.hill); i > 0; i--)     this._blob(T_HILL,     between(2, 3), 0);
       for (let i = between(...P.forest); i > 0; i--)   this._blob(T_FOREST,   between(2, 4), 0);
+      for (let i = between(...P.wall); i > 0; i--)     this._wallSegment();
     }
     this._placeForts(P.forts, barrier);
     this._placeSpawns(barrier);
@@ -192,6 +196,30 @@ export class GameMap {
         this.tiles[ny][nx] = type;
         cells.push([nx, ny]);
       }
+      return;
+    }
+  }
+
+  /* A stretch of wall on open ground: a straight run of 2-5 tiles, now and then
+     with a perpendicular stub to make an L. Walls block movement, so they carve
+     lanes and corners to fight around. Never in the player start zone; a layout
+     that seals off an area is rejected later by _isValid. */
+  _wallSegment() {
+    for (let tries = 0; tries < 30; tries++) {
+      const horiz = Math.random() < 0.5;
+      const len = between(2, 5);
+      const sx = between(START_W + 1, COLS - 2), sy = rnd(ROWS);
+      const cells = [];
+      for (let i = 0; i < len; i++) cells.push(horiz ? [sx + i, sy] : [sx, sy + i]);
+      if (len >= 3 && Math.random() < 0.4) {
+        const [ex, ey] = cells[Math.random() < 0.5 ? 0 : len - 1];
+        const d = Math.random() < 0.5 ? 1 : -1;
+        cells.push(horiz ? [ex, ey + d] : [ex + d, ey]);
+      }
+      const ok = cells.every(([x, y]) =>
+        x > START_W && x < COLS && y >= 0 && y < ROWS && this.tiles[y][x] === T_PLAIN);
+      if (!ok) continue;
+      for (const [x, y] of cells) this.tiles[y][x] = T_WALL;
       return;
     }
   }

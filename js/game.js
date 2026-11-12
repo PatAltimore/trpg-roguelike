@@ -103,7 +103,6 @@ class Game {
 
     /* play log */
     this.playLog     = [];   // [{text, color, snap}] — capped at 80 entries
-    this._toasts     = [];   // floating battle text — [{text, color, tx, ty, ox, oy, born}]
     this.snapshots   = [];   // game-state snapshots for rewind
     this.rewindsLeft = 3;    // charges remaining this level
     this._historyView = null; // {snap, entry} when browsing history, null otherwise
@@ -119,6 +118,7 @@ class Game {
     this._enemyCombatPending = false;
     this._combatAtk = null;
     this._combatDef = null;
+    this._strike = null;     // the strike just landed — {src, tgt, hit, crit, at}, for the 2D animation
     this._healMode = false;
     this._stealMode = false;
     this._itemMenu = null;  // { items: [...], sel: 0 } when open
@@ -132,6 +132,10 @@ class Game {
     this.cv.addEventListener('click',       e => this._click(e));
     this.cv.addEventListener('contextmenu', e => { e.preventDefault(); this._cancel(); });
     this.cv.addEventListener('mousemove',   e => this._hover(e));
+    this.cv.addEventListener('mousedown',   e => this._mouseDown(e));
+    window.addEventListener('mouseup',      () => this._mouseUp());
+    this._drag3d = null;         // an in-progress drag on the 3D board
+    this._suppressClick = false; // swallow the click that ends a drag
     this.cv.addEventListener('wheel',       e => this._onWheel(e), { passive: false });
     document.addEventListener('keydown',    e => this._keyDown(e));
 
@@ -168,16 +172,12 @@ class Game {
     return runs;
   }
 
-  /* `at` — a unit or {x, y} tile; when given, the entry also floats over that
-     tile as battle text (see Renderer._battleToasts); `also` is the other fighter,
-     so the text can keep clear of both. */
-  _addLog(text, color = '#a0a0c0', at = null, also = null) {
+  _addLog(text, color = '#a0a0c0') {
     const runs = this._nameRuns(text);
     /* capture the exact playfield state before this entry is added so
        history view can show precisely what the board looked like at this moment */
     this.playLog.push({ text, runs, color, snap: this._captureState() });
     if (this.playLog.length > 120) this.playLog.shift();
-    if (at) this._toasts.push({ text, runs, color, tx: at.x, ty: at.y, ox: also ? also.x : at.x, oy: also ? also.y : at.y, born: performance.now() });
   }
 
   /* Give a player unit XP; a level-up fully restores its HP (see Unit.levelUp). */
@@ -186,7 +186,7 @@ class Game {
     const gained = u.gainXp(amount);
     if (gained > 0) {
       SFX.levelUp();
-      this._addLog(`${u.name} reached Lv.${u.level}! HP restored`, '#ffd700', u);
+      this._addLog(`${u.name} reached Lv.${u.level}! HP restored`, '#ffd700');
     }
   }
 
@@ -314,7 +314,6 @@ class Game {
 
     /* reset log and rewind state for new level */
     this.playLog      = [];
-    this._toasts      = [];
     this.snapshots    = [];
     this.rewindsLeft  = 3;
     this._historyView = null;
@@ -367,12 +366,60 @@ class Game {
       SFX.select();
       return true;
     }
-    if (hit(b.left))  { this.ren.rotateView(-1); SFX.select(); return true; }
-    if (hit(b.right)) { this.ren.rotateView(1);  SFX.select(); return true; }
+    const v3 = this.ren._v3;
+    for (const [name, r] of Object.entries(b.btns)) {
+      if (!hit(r) || !v3) continue;
+      if      (name === 'rotLeft')  v3.rotate(-1);
+      else if (name === 'rotRight') v3.rotate(1);
+      else if (name === 'tiltUp')   v3.tilt(1);
+      else if (name === 'tiltDown') v3.tilt(-1);
+      else if (name === 'zoomIn')   v3.zoomBy(1.25);
+      else if (name === 'zoomOut')  v3.zoomBy(1 / 1.25);
+      else if (name === 'reset')    v3.reset();
+      return true;
+    }
     return false;
   }
 
+  /* ── 3D camera by mouse: a drag that starts on the board pans it; one that starts in the
+     space around it rotates and tilts the view. Shift- or middle-drag always pans. ── */
+  _mouseDown(e) {
+    const v3 = this.ren._v3;
+    if (!v3 || (e.button !== 0 && e.button !== 1)) return;
+    const { px, py } = this._px(e);
+    if (px < 0 || py < 0 || px >= COLS * TILE || py >= ROWS * TILE) return;
+    const b = this.ren._viewBtns;
+    const onBtn = r => r && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+    if (b && (onBtn(b.mode) || Object.values(b.btns).some(onBtn))) return;
+    if (e.button === 1) e.preventDefault();
+    this._drag3d = { px, py, cx: e.clientX, cy: e.clientY, moved: false,
+                     pan: e.button === 1 || e.shiftKey || !!v3.pick(px, py) };
+  }
+
+  _dragMove(e) {
+    const d = this._drag3d, v3 = this.ren._v3;
+    if (!v3) { this._drag3d = null; return; }
+    if (!d.moved && Math.hypot(e.clientX - d.cx, e.clientY - d.cy) < 6) return;   // still a click
+    d.moved = true;
+    const { px, py } = this._px(e);
+    if (d.pan) v3.pan(px - d.px, py - d.py); else v3.drag(px - d.px, py - d.py);
+    d.px = px; d.py = py;
+    this.cv.style.cursor = d.pan ? 'move' : 'grabbing';
+  }
+
+  _mouseUp() {
+    const d = this._drag3d;
+    if (!d) return;
+    this._drag3d = null;
+    this.cv.style.cursor = '';
+    if (d.moved) {                       // the click that follows a drag is not a click
+      this._suppressClick = true;
+      setTimeout(() => { this._suppressClick = false; }, 0);
+    }
+  }
+
   _hover(e) {
+    if (this._drag3d) { this._dragMove(e); return; }
     const { px, py } = this._px(e);
     const { cx, cy } = this._tileAt(px, py);
     if (cx >= 0 && cx < COLS && cy >= 0 && cy < ROWS) {
@@ -389,6 +436,7 @@ class Game {
   }
 
   _click(e) {
+    if (this._suppressClick) return;
     const { px, py } = this._px(e);
     const { cx, cy } = this._tileAt(px, py);
 
@@ -674,7 +722,7 @@ class Game {
       const healAmt = this.sel.mag + this.sel.weapon.mt + 10;
       const actual = Math.min(tgt.maxHp - tgt.hp, healAmt);
       tgt.hp = Math.min(tgt.maxHp, tgt.hp + healAmt);
-      this._addLog(`${this.sel.name} heals ${tgt.name}: +${actual} HP`, '#80ff80', tgt);
+      this._addLog(`${this.sel.name} heals ${tgt.name}: +${actual} HP`, '#80ff80');
       SFX.hit();
       if (actual > 0) this._awardXp(this.sel, XP_HEAL);
       this.sel.acted = true;
@@ -694,11 +742,11 @@ class Game {
       if (Math.random() * 100 < chance && this.sel.inventory.length < MAX_INVENTORY) {
         const stolen = tgt.inventory.splice(0, 1)[0];
         this.sel.inventory.push(stolen);
-        this._addLog(`${this.sel.name} steals ${stolen.name}!`, '#c0ff80', tgt);
+        this._addLog(`${this.sel.name} steals ${stolen.name}!`, '#c0ff80');
         SFX.hit();
         this._awardXp(this.sel, XP_STEAL);
       } else {
-        this._addLog(`${this.sel.name}: steal failed!`, '#a0a060', tgt);
+        this._addLog(`${this.sel.name}: steal failed!`, '#a0a060');
         SFX.miss();
       }
       this.sel.acted = true;
@@ -725,12 +773,18 @@ class Game {
   _keyDown(e) {
     if (e.key === 'Escape') { this._cancel(); return; }
 
-    /* view: V flips between the flat map and the 3D isometric view, Q / E rotate the 3D board */
+    /* view: V flips between the flat map and the 3D isometric view; in 3D, Q / E rotate, + / - zoom, R resets */
     if (!e.ctrlKey && !e.metaKey && !e.altKey && this.state !== S_TITLE) {
       const k = e.key.toLowerCase();
       if (k === 'v') { this.ren.setMode3d(!this.ren.mode3d); return; }
-      if (k === 'q') { this.ren.rotateView(-1); return; }
-      if (k === 'e') { this.ren.rotateView(1); return; }
+      const v3 = this.ren._v3;
+      if (v3) {
+        if (k === 'q') { v3.rotate(-1); return; }
+        if (k === 'e') { v3.rotate(1); return; }
+        if (k === '+' || k === '=') { v3.zoomBy(1.25); return; }
+        if (k === '-' || k === '_') { v3.zoomBy(1 / 1.25); return; }
+        if (k === 'r') { v3.reset(); return; }
+      }
     }
 
     /* arrow keys navigate history entries when the log is in history view */
@@ -826,6 +880,13 @@ class Game {
   /* ── mouse wheel — scroll the play log ── */
   _onWheel(e) {
     const { px, py } = this._px(e);
+    /* over the 3D board the wheel zooms the camera */
+    const v3 = this.ren._v3;
+    if (v3 && px >= 0 && py >= 0 && px < COLS * TILE && py < ROWS * TILE) {
+      e.preventDefault();
+      v3.zoomAt(e.deltaY > 0 ? 1 / 1.15 : 1.15, px, py);
+      return;
+    }
     /* check if wheel is over the log panel area */
     const logPanel = this.ren._logPanelBounds;
     if (!logPanel) return;
@@ -865,7 +926,8 @@ class Game {
       const col = entry.src.isPlayer ? (entry.crit ? '#c0c0ff' : '#8080ff')
                                       : (entry.crit ? '#ffc0c0' : '#ff8080');
       if (!entry.hit) SFX.miss(); else if (entry.crit) SFX.crit(); else SFX.hit();
-      this._addLog(said, col, entry.tgt, entry.src);
+      this._strike = { src: entry.src, tgt: entry.tgt, hit: entry.hit, crit: entry.crit, at: now };   // drives the 2D strike animation
+      this._addLog(said, col);
       /* XP for the player's strikes — damage dealt, plus a bonus for the kill */
       if (entry.src.isPlayer && entry.hit && !entry.tgt.isPlayer) {
         let xp = Math.max(XP_MIN_HIT, entry.dmg);
@@ -887,7 +949,7 @@ class Game {
     let posted = false;   // any kill / loot lines that need reading time
     /* log kills before filtering */
     for (const u of [...this.enemies, ...this.players]) {
-      if (!u.alive) { this._addLog(fallsLine(u), '#ffd700', u); posted = true; }
+      if (!u.alive) { this._addLog(fallsLine(u), '#ffd700'); posted = true; }
     }
     /* handle items from dead units */
     let itemsDropped = false;
@@ -898,7 +960,7 @@ class Game {
         for (const item of e.inventory) {
           if (killer && killer.isPlayer && killer.inventory.length < MAX_INVENTORY) {
             killer.inventory.push({ ...item });
-            this._addLog(`${killer.name} loots ${item.name}!`, '#c0ff80', killer);
+            this._addLog(`${killer.name} loots ${item.name}!`, '#c0ff80');
             posted = true;
           } else {
             /* killer's inventory full — leave on ground */
@@ -926,7 +988,7 @@ class Game {
     if (this.enemies.length < hadEnemies || this.players.length < hadPlayers) SFX.kill();
     /* the warlord's fall breaks the enemy army — the rest flee and the battle is won */
     if (warlord && this.enemies.length && this.players.some(p => p.key === 'LORD')) {
-      this._addLog('Warlord defeated! The enemy flees!', '#ffd700', warlord);
+      this._addLog('Warlord defeated! The enemy flees!', '#ffd700');
       this.enemies = [];
       posted = true;
     }
@@ -1279,7 +1341,7 @@ class Game {
       if (d.x === u.x && d.y === u.y && u.inventory.length < MAX_INVENTORY) {
         u.inventory.push(d.item);
         toRemove.push(i);
-        this._addLog(`${u.name} picks up ${d.item.name}`, '#c0ff80', u);
+        this._addLog(`${u.name} picks up ${d.item.name}`, '#c0ff80');
         SFX.select();
       }
     }
@@ -1316,7 +1378,7 @@ class Game {
     /* remove from inventory */
     const idx = u.inventory.indexOf(item);
     if (idx >= 0) u.inventory.splice(idx, 1);
-    this._addLog(`${u.name} uses ${item.name}`, '#80ff80', u);
+    this._addLog(`${u.name} uses ${item.name}`, '#80ff80');
     SFX.hit();
   }
 

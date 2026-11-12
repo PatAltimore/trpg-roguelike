@@ -98,8 +98,6 @@ export class Renderer {
     try { localStorage.setItem('emblemtactics_view', on ? '3d' : '2d'); } catch (e) { /* no storage */ }
   }
 
-  rotateView(dir) { if (this._v3) this._v3.rotate(dir); }
-
   /* The View3D to draw this frame, or null to fall back to the flat map.
      Starts loading three.js the first time 3D is wanted. */
   _active3d(gameplay) {
@@ -252,7 +250,6 @@ export class Renderer {
       this._units(g);
       this._cursor(g);
     }
-    this._battleToasts(g);
     this._viewSwitch(g);
     this._sidebar(g);
     if (g.state === S_ACTION_MENU) this._menu(g);
@@ -289,12 +286,13 @@ export class Renderer {
 
   /* HP bar and class letter floating over each 3D unit */
   _unitLabels3d(g) {
-    const v3 = this._v3, c = this.cx, S = v3.unitPx;
-    const bw = S * 0.8, bh = Math.max(4, S * 0.1);
+    const v3 = this._v3, c = this.cx;
     const units = this._v3units.slice().sort((a, b) => a.x + a.y - b.x - b.y);
     for (const u of units) {
       const p = v3.unitAnchor(u, 1.0);
       if (!p) continue;
+      const S = v3.unitScale(u);
+      const bw = S * 0.8, bh = Math.max(4, S * 0.1);
       const pct = u.hp / u.maxHp;
       const x = p.x - bw / 2, y = p.y - bh - 3;
       c.fillStyle = 'rgba(0,0,0,0.75)'; c.fillRect(x - 1, y - 1, bw + 2, bh + 2);
@@ -314,13 +312,14 @@ export class Renderer {
     }
   }
 
-  /* 2D | 3D switch (and, in 3D, rotate buttons) in the map's bottom-right corner */
+  /* 2D | 3D switch in the map's bottom-right corner; in 3D, camera buttons
+     (rotate, tilt, zoom, reset) to its left. Bounds go to _viewBtns for Game._clickViewBtns. */
   _viewSwitch(g) {
     if (g.state === S_WIN || g.state === S_LOSE) return;
     const c = this.cx;
     const k = Math.max(1, this._sideRect.scale * 0.9);
     const mapW = COLS * TILE, mapH = ROWS * TILE;
-    const bh = 24 * k, hw = 30 * k, gap = 6 * k, edge = 8 * k;
+    const bh = 24 * k, hw = 30 * k, gap = 5 * k, edge = 8 * k;
     const mx = mapW - edge - hw * 2, my = mapH - edge - bh;
     const on3d = !!this._v3;
 
@@ -333,151 +332,54 @@ export class Renderer {
       c.fillStyle = active ? '#ffffff' : '#7080a0';
       c.fillText(label, x + hw / 2, my + bh / 2 + 3 * k);
     });
-    this._viewBtns = { mode: { x: mx, y: my, w: hw * 2, h: bh }, left: null, right: null };
+    this._viewBtns = { mode: { x: mx, y: my, w: hw * 2, h: bh }, btns: {} };
 
     if (on3d) {
-      const arrow = (bx, dir) => {
-        c.fillStyle = '#101020'; c.fillRect(bx, my, bh, bh);
-        c.strokeStyle = '#404060'; c.lineWidth = 1; c.strokeRect(bx, my, bh, bh);
-        c.save();
-        c.translate(bx + bh / 2, my + bh / 2);
+      const lw = Math.max(2, k * 1.5), ic = '#80a0ff';
+      const turn = dir => {                          /* curved arrow, mirrored for the other way */
         c.scale(dir, 1);
-        const r = bh * 0.27;
-        c.strokeStyle = '#80a0ff'; c.fillStyle = '#80a0ff'; c.lineWidth = Math.max(2, k * 1.5);
+        const r = bh * 0.27, ca = Math.cos(0.9), sa = Math.sin(0.9), h = bh * 0.2;
         c.beginPath(); c.arc(0, 0, r, -2.3, 0.9); c.stroke();
-        const ca = Math.cos(0.9), sa = Math.sin(0.9), h = bh * 0.2;
-        const ex = ca * r, ey = sa * r;      /* arc end; tangent (-sa, ca), outward normal (ca, sa) */
         c.beginPath();
-        c.moveTo(ex - sa * h * 1.2, ey + ca * h * 1.2);
-        c.lineTo(ex + ca * h * 0.8, ey + sa * h * 0.8);
-        c.lineTo(ex - ca * h * 0.8, ey - sa * h * 0.8);
+        c.moveTo(ca * r - sa * h * 1.2, sa * r + ca * h * 1.2);
+        c.lineTo(ca * r + ca * h * 0.8, sa * r + sa * h * 0.8);
+        c.lineTo(ca * r - ca * h * 0.8, sa * r - sa * h * 0.8);
         c.closePath(); c.fill();
-        c.restore();
       };
-      const rx = mx - gap - bh, lx = rx - gap - bh;
-      arrow(lx, -1); arrow(rx, 1);
-      this._viewBtns.left  = { x: lx, y: my, w: bh, h: bh };
-      this._viewBtns.right = { x: rx, y: my, w: bh, h: bh };
-    }
-    c.restore();
-  }
-
-  /* ═══════════ BATTLE TOASTS ═══════════
-     Play-log entries that happen at a spot on the map (strikes, misses,
-     heals, level-ups…) float over that tile: fade in while the text grows,
-     hold, then fade out — see Game._addLog. */
-  _battleToasts(g) {
-    const toasts = g._toasts;
-    if (!toasts || !toasts.length) return;
-    const c = this.cx;
-    const mapW = COLS * TILE, mapH = ROWS * TILE;
-    const units = [...g.players, ...g.enemies].filter(u => u.alive);
-    /* timeline (ms): fade in while growing, sit fully expanded long enough to
-       read, then fade out */
-    const GROW = 500, HOLD = 10000, FADE = 700;
-    const START = 0.75, END = 1.35; // text size multiplier at birth / fully grown
-    const now = performance.now();
-
-    for (let i = toasts.length - 1; i >= 0; i--) {
-      if (now - toasts[i].born >= GROW + HOLD + FADE) toasts.splice(i, 1);
-    }
-
-    /* the map is drawn at a fixed size and then shrunk to fit a phone, so
-       bump the text with the info pane's portrait scale to keep it legible */
-    const base = 11 * Math.max(1, this._sideRect.scale * 0.4);
-    const maxW = mapW * 0.8;
-    const placed = [];
-
-    c.save();
-    c.textAlign = 'center';
-    c.lineJoin = 'round';
-    for (const t of toasts) {          // oldest first, so newer text stacks above
-      const elapsed = now - t.born;
-      const grow = Math.min(1, elapsed / GROW);
-
-      /* wrap once at the largest size so lines don't reflow while it grows */
-      if (t._wrapBase !== base) {
-        c.font = `${base * END}px ${FONT}`;
-        /* lines are char ranges into the text, so name colours survive wrapping */
-        const lines = [];
-        let start = 0, pos = 0;
-        for (const word of t.text.split(' ')) {
-          const end = pos + word.length;
-          if (end > start && pos > start && c.measureText(t.text.slice(start, end)).width > maxW) {
-            lines.push({ s: start, e: pos - 1 });
-            start = pos;
-          }
-          pos = end + 1;
+      const tri = dir => {                           /* up / down triangle */
+        const r = bh * 0.24;
+        c.beginPath(); c.moveTo(0, -dir * r); c.lineTo(r, dir * r * 0.7); c.lineTo(-r, dir * r * 0.7); c.closePath(); c.fill();
+      };
+      const bar = plus => {                          /* - / + */
+        const r = bh * 0.26;
+        c.beginPath(); c.moveTo(-r, 0); c.lineTo(r, 0); if (plus) { c.moveTo(0, -r); c.lineTo(0, r); } c.stroke();
+      };
+      const fit = () => {                            /* corner brackets: back to the default view */
+        const r = bh * 0.26, l = bh * 0.14;
+        c.beginPath();
+        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+          c.moveTo(sx * r, sy * (r - l)); c.lineTo(sx * r, sy * r); c.lineTo(sx * (r - l), sy * r);
         }
-        lines.push({ s: start, e: t.text.length });
-        t._lines = lines.slice(0, 4).map(l => this._sliceRuns(t.runs, l.s, l.e));
-        t._wrapBase = base;
-      }
-
-      const fs = base * (START + (END - START) * grow);
-      const lineH = fs * 1.35;
-      const alpha = elapsed < GROW ? grow
-                  : elapsed > GROW + HOLD ? 1 - (elapsed - GROW - HOLD) / FADE
-                  : 1;
-      c.font = `${fs}px ${FONT}`;
-      const w = Math.max(...t._lines.map(l => this._runsWidth(l)));
-      const h = t._lines.length * lineH;
-
-      /* the fight fills these tiles; the text sits above or below them so it
-         never covers the fighters (and steers clear of other units too) */
-      const { bx, by0, by1 } = this._fightBox(t);
-      const cx = Math.min(mapW - w / 2 - 6, Math.max(w / 2 + 6, bx));
-      const gap = 6 + 8 * (base / 11) * grow;   // drifts away from the fight as it grows
-      const rectAt = top => ({ x: cx - w / 2, y: top, w, h });
-      const hits = r => placed.some(p => r.x < p.x + p.w && r.x + r.w > p.x && r.y < p.y + p.h && r.y + r.h > p.y);
-      const place = dir => {
-        let top = dir < 0 ? by0 - gap - h : by1 + gap;
-        for (let n = 0; n < 12 && hits(rectAt(top)); n++) top += dir * lineH * 0.5;
-        return top;
+        c.stroke();
       };
-      if (!t._side) {   // pick a side once, so the text doesn't jump if units move
-        const cost = top => {
-          const r = rectAt(top);
-          const off = Math.max(0, 2 - top) + Math.max(0, top + h - (mapH - 2));
-          const onUnit = units.filter(u => {
-            const b = this._unitBox(u);
-            return r.x < b.x1 && r.x + r.w > b.x0 && r.y < b.y1 && r.y + r.h > b.y0;
-          }).length;
-          return off * 10 + onUnit * 100;
-        };
-        t._side = cost(place(1)) < cost(place(-1)) ? 1 : -1;   // ties go above
+      /* drawn right to left, ending just left of the switch */
+      const defs = [['reset', fit], ['zoomIn', () => bar(true)], ['zoomOut', () => bar(false)],
+                    ['tiltDown', () => tri(-1)], ['tiltUp', () => tri(1)],
+                    ['rotRight', () => turn(1)], ['rotLeft', () => turn(-1)]];
+      let x = mx - gap - bh;
+      for (const [name, draw] of defs) {
+        c.fillStyle = '#101020'; c.fillRect(x, my, bh, bh);
+        c.strokeStyle = '#404060'; c.lineWidth = 1; c.strokeRect(x, my, bh, bh);
+        c.save();
+        c.translate(x + bh / 2, my + bh / 2);
+        c.strokeStyle = ic; c.fillStyle = ic; c.lineWidth = lw;
+        draw();
+        c.restore();
+        this._viewBtns.btns[name] = { x, y: my, w: bh, h: bh };
+        x -= gap + bh;
       }
-      let top = place(t._side);
-      top = Math.max(2, Math.min(mapH - h - 2, top));
-      placed.push(rectAt(top));
-
-      c.globalAlpha = Math.max(0, Math.min(1, alpha));
-      c.lineWidth = Math.max(3, fs * 0.3);
-      c.strokeStyle = 'rgba(0,0,0,0.85)';
-      t._lines.forEach((runs, i) => this._fillRuns(runs, cx, top + fs + i * lineH, 'center', t.color, true));
     }
     c.restore();
-  }
-
-  /* where a battle-text entry's fight sits on the map canvas: horizontal
-     centre and top/bottom edges of the fighters. The 2D map is a plain grid;
-     in 3D the tiles are projected, and the box covers the units standing on them. */
-  _fightBox(t) {
-    const v3 = this._v3;
-    if (!v3) {
-      return { bx: (Math.min(t.tx, t.ox) + Math.max(t.tx, t.ox) + 1) * TILE / 2,
-               by0: Math.min(t.ty, t.oy) * TILE, by1: (Math.max(t.ty, t.oy) + 1) * TILE };
-    }
-    const a = v3.tilePoint(t.tx, t.ty), b = v3.tilePoint(t.ox, t.oy), S = v3.unitPx;
-    return { bx: (a.x + b.x) / 2, by0: Math.min(a.y, b.y) - S * 1.25, by1: Math.max(a.y, b.y) + S * 0.35 };
-  }
-
-  /* the screen box a unit occupies */
-  _unitBox(u) {
-    const v3 = this._v3;
-    if (!v3) return { x0: u.x * TILE, x1: (u.x + 1) * TILE, y0: u.y * TILE, y1: (u.y + 1) * TILE };
-    const p = v3.tilePoint(u.x, u.y), S = v3.unitPx;
-    return { x0: p.x - S * 0.5, x1: p.x + S * 0.5, y0: p.y - S * 1.25, y1: p.y + S * 0.35 };
   }
 
   /* ── coloured text runs [{t, c?}] — unit names carry their own colour, the
@@ -1130,6 +1032,17 @@ export class Renderer {
     const off = (T - 40) / 2;
     const x = x0 + off, y = y0 + off;
 
+    /* strike animation: the attacker swells and settles, the target shakes
+       (or sidesteps on a miss) — see Game._stepCombatAnim */
+    const fx = this._strikeFx(u, g);
+    c.save();
+    if (fx) {
+      const mx = x0 + T / 2, my = y0 + T / 2;
+      c.translate(mx + fx.dx, my);
+      c.scale(fx.s, fx.s);
+      c.translate(-mx, -my);
+    }
+
     /* body */
     c.fillStyle = dim ? this._dim(u.hue) : u.hue;
     c.fillRect(x+8, y+14, 24, 16);
@@ -1224,6 +1137,23 @@ export class Renderer {
     c.fillStyle = '#fff';
     c.fillText(u.lbl, lx, ly);
     c.textBaseline = 'alphabetic';
+    c.restore();
+  }
+
+  /* scale / horizontal offset for a unit mid-strike, or null */
+  _strikeFx(u, g) {
+    const k = g._strike;
+    if (!k) return null;
+    const t = performance.now() - k.at;
+    if (u === k.src && t < 380) {
+      return { s: 1 + (k.crit ? 0.55 : 0.4) * Math.sin(Math.PI * t / 380), dx: 0 };
+    }
+    if (u === k.tgt && t < 450) {
+      const p = t / 450;
+      if (k.hit) return { s: 1, dx: Math.sin(p * Math.PI * 6) * (1 - p) * (k.crit ? 11 : 7) };
+      return { s: 1, dx: Math.sin(p * Math.PI) * 12 * (k.src.x <= u.x ? 1 : -1) };   // dodge away from the attacker
+    }
+    return null;
   }
 
   _helm(k) {

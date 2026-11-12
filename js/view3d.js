@@ -34,16 +34,17 @@ export function loadThree() {
 
 const MAP_W = COLS * TILE, MAP_H = ROWS * TILE;
 const PITCH = 0.6155;               // true isometric elevation (35.26 degrees)
+const MIN_PITCH = 0.3, MAX_PITCH = 1.3;
+const MIN_ZOOM = 0.8, MAX_ZOOM = 4;
+const FOV = 30;          // degrees: narrow, so it reads as isometric-ish but edges converge naturally
+const CAM_DIST = 28;     // camera distance from the point it looks at
 const BASE_AZIMUTH = Math.PI * 0.75; // camera sits at -x / +z: the player's side is bottom-left
 
 /* height of the standing surface on each terrain, in tiles */
 const SURF = new Map([
   [T_PLAIN, 0.25], [T_FOREST, 0.25], [T_MOUNTAIN, 0.25], [T_WATER, 0.12], [T_WALL, 0.6],
-  [T_ROAD, 0.22], [T_FORT, 0.3], [T_HILL, 0.62], [T_SWAMP, 0.18], [T_FORD, 0.14], [T_BRIDGE, 0.28],
+  [T_ROAD, 0.22], [T_FORT, 0.3], [T_HILL, 0.78], [T_SWAMP, 0.18], [T_FORD, 0.14], [T_BRIDGE, 0.28],
 ]);
-
-/* rough height of the tallest feature on each terrain */
-const TOP = new Map([[T_MOUNTAIN, 1.75], [T_FOREST, 1.0], [T_WALL, 0.8], [T_FORT, 0.85]]);
 
 const HELM = { LORD:'#c0a000', FIGHTER:'#808080', MAGE:'#a000c0', ARCHER:'#206040',
                HEALER:'#e0e040', CAVALIER:'#208040', KNIGHT:'#4060a0', THIEF:'#606020',
@@ -78,14 +79,14 @@ export class View3D {
     this.renderer.shadowMap.type = T.PCFSoftShadowMap;
 
     this.scene = new T.Scene();
-    this.scene.background = new T.Color('#0d1022');
-    this.camera = new T.OrthographicCamera(-10, 10, 7, -7, 0.1, 200);
+    this.scene.background = new T.Color('#1b3a5e');
+    this.camera = new T.PerspectiveCamera(FOV, MAP_W / MAP_H, 1, 400);
     this._pr = 0;
     this._tf = null;
     this._setRes(1);
 
-    this.scene.add(new T.AmbientLight(0xffffff, 0.62));
-    const sun = new T.DirectionalLight(0xfff2dc, 0.72);
+    this.scene.add(new T.AmbientLight(0xe8e0ff, 0.62));
+    const sun = new T.DirectionalLight(0xffe6c0, 0.74);
     sun.position.set(COLS / 2 - 7, 14, ROWS / 2 + 9);
     sun.target.position.set(COLS / 2, 0, ROWS / 2);
     sun.castShadow = true;
@@ -107,14 +108,18 @@ export class View3D {
     this.matCache = new Map();
     this.shared = this._sharedGeos();
 
-    this.yaw = 0; this.yawT = 0;
-    this.unitPx = MAP_W / 18;
+    this.yaw = 0; this.yawT = 0;     // board rotation (radians); yawT is where it is easing to
+    this.pitch = PITCH;              // camera elevation
+    this.zoom = 1;                   // 1 = whole board in view
+    this.panV = { x: 0, z: 0 };      // pan: how far the look-at point is from the board's centre (world units)
+    this.fwd = new T.Vector3();
     this.shown = false;
     this._last = performance.now();
     this.ray = new T.Raycaster();
     this.tmp = new T.Vector3();
 
     this._buildOverlays();
+    this._buildSky();
   }
 
   /* ───────── resolution / visibility ───────── */
@@ -142,7 +147,70 @@ export class View3D {
     this._setRes(m ? parseFloat(m[1]) : 1);
   }
 
-  rotate(dir) { this.yawT += dir * Math.PI / 2; }
+  /* ───────── view controls ───────── */
+  /* a quarter turn, snapping to the nearest quarter first if dragged off-axis */
+  rotate(dir) {
+    const q = Math.PI / 2;
+    this.yawT = (Math.round(this.yawT / q) + dir) * q;
+  }
+
+  tilt(dir) { this.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, this.pitch + dir * 0.12)); }
+
+  /* free rotation while dragging: dx turns the board, dy tilts the camera */
+  drag(dx, dy) {
+    this.yaw += dx * 0.008;
+    this.yawT = this.yaw;
+    this.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, this.pitch + dy * 0.004));
+  }
+
+  /* world units per canvas pixel at the point the camera looks at */
+  _worldPerPx() {
+    return 2 * CAM_DIST * Math.tan(FOV * Math.PI / 360) / this.zoom / MAP_H;
+  }
+
+  /* slide the view; dx, dy in canvas pixels. The board follows the mouse. */
+  pan(dx, dy) {
+    const a = BASE_AZIMUTH + this.yaw, u = this._worldPerPx();
+    const fx = -Math.cos(a), fz = -Math.sin(a);               // ground direction away from the camera
+    const rx = Math.sin(a), rz = -Math.cos(a);                // ground direction to the screen's right
+    const ahead = dy * u / Math.sin(this.pitch);
+    this.panV.x += -rx * dx * u + fx * ahead;
+    this.panV.z += -rz * dx * u + fz * ahead;
+  }
+
+  zoomBy(f) { this.zoomAt(f, MAP_W / 2, MAP_H / 2); }
+
+  /* the point on the ground plane under a canvas pixel, or null */
+  _ground(px, py) {
+    this.ray.setFromCamera({ x: px / MAP_W * 2 - 1, y: -(py / MAP_H * 2 - 1) }, this.camera);
+    const { origin, direction } = this.ray.ray;
+    if (Math.abs(direction.y) < 1e-6) return null;
+    const t = (0.3 - origin.y) / direction.y;
+    return t > 0 ? { x: origin.x + direction.x * t, z: origin.z + direction.z * t } : null;
+  }
+
+  /* zoom keeping the point under pixel (px, py) where it is */
+  zoomAt(f, px, py) {
+    const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.zoom * f));
+    if (z === this.zoom) return;
+    const before = this._ground(px, py);
+    this.zoom = this.camera.zoom = z;
+    this.camera.updateProjectionMatrix();
+    const after = this._ground(px, py);
+    if (before && after) {
+      this.panV.x += before.x - after.x;
+      this.panV.z += before.z - after.z;
+    }
+  }
+
+  reset() {
+    const turn = Math.PI * 2;
+    this.yaw -= Math.round(this.yaw / turn) * turn;      // take the short way round
+    this.yawT = 0;
+    this.pitch = PITCH;
+    this.zoom = 1;
+    this.panV = { x: 0, z: 0 };
+  }
 
   /* ───────── materials / geometry helpers ───────── */
   _sharedGeos() {
@@ -218,7 +286,6 @@ export class View3D {
     this.surf = [];
     this.water = [];
     this.map = map;
-    this.topH = 0.7;       // tallest thing on the board, so the camera frames it
     const grp = this.mapGroup = new T.Group();
     this.scene.add(grp);
 
@@ -235,7 +302,6 @@ export class View3D {
       for (let x = 0; x < COLS; x++) {
         const t = map.at(x, y);
         this.surf[y * COLS + x] = SURF.has(t) ? SURF.get(t) : 0.25;
-        this.topH = Math.max(this.topH, TOP.get(t) || 0.7);
         this._buildTile(x, y, t);
       }
     }
@@ -313,11 +379,22 @@ export class View3D {
       for (const sx of [-0.24, 0.24]) put(this._box(this.mat('#b89860'), 0.07, 0.012, 0.98, sx, 0.22, 0));
       for (let i = 0; i < 3; i++) put(this._box(this.mat('#a89060'), 0.07, 0.04, 0.07, (r(1 + i) - 0.5) * 0.6, 0.22, (r(5 + i) - 0.5) * 0.7));
     } else if (t === T_HILL) {
-      base('#7a7638', 0.25);
-      const dome = this._mesh(this.shared.dome, this.mat('#8f8a45', v), 0.5, 0.375, 0.5, 0, 0.25, 0);
-      put(dome);
-      put(this._box(this.mat('#6a6630'), 0.1, 0.05, 0.08, 0.2, 0.25, 0.3));
-      put(this._box(this.mat('#6a6630'), 0.08, 0.05, 0.1, -0.28, 0.25, -0.1));
+      /* rolling hills: a broad terrace, a rounded crown on it where units stand, and a couple
+         of lesser mounds on the flanks — laid out differently on each tile; bare brown earth */
+      base('#6e5a3a', 0.25);
+      const low = this.mat('#7a6240', v), flank = this.mat('#8a6e47', v), crown = this.mat('#9b7d52', v);
+      const mound = (mat, px, pz, rx, h, rz, y0, rot) => {
+        const m = this._mesh(this.shared.dome, mat, rx, h, rz, px, y0, pz);
+        m.rotation.y = rot;
+        return put(m, true);
+      };
+      const fx = r(2) < 0.5 ? 1 : -1, fz = r(3) < 0.5 ? 1 : -1;
+      mound(low, 0, 0, 0.49, 0.3, 0.47, 0.25, r(1) * 3.14);                        // terrace, apex 0.55
+      mound(flank, -0.24 * fx, -0.18 * fz, 0.23, 0.32, 0.2, 0.26, r(4) * 3);       // flank mounds
+      mound(flank, 0.26 * fx, 0.24 * fz, 0.2, 0.24, 0.18, 0.26, r(5) * 3);
+      mound(crown, 0, 0, 0.34, 0.32, 0.32, 0.46, r(6) * 3);                       // crown, apex 0.78
+      put(this._box(this.mat('#8a8a80'), 0.1, 0.07, 0.08, 0.3 * fx, 0.36, -0.06 * fz), true);
+      put(this._box(this.mat('#7a7a72'), 0.07, 0.05, 0.09, -0.12 * fx, 0.28, 0.4 * fz), true);
     } else if (t === T_SWAMP) {
       base('#3f5a45', 0.18);
       for (const [px, pz, rad] of [[-0.2, -0.15, 0.2], [0.2, 0.2, 0.17]]) {
@@ -349,6 +426,251 @@ export class View3D {
       for (let i = 0; i < n; i++) {
         put(this._cone(this.mat('#4a7a10', v), 0.05, 0.15, (r(2 + i) - 0.5) * 0.8, 0.25, (r(8 + i) - 0.5) * 0.8));
       }
+    }
+  }
+
+  /* ───────── enchanted backdrop: a misty twilight vista, drifting wisps, a rune circle, and the
+     mossy island the board floats on ───────── */
+  _buildSky() {
+    const T = this.T;
+    let seed = 20240611;
+    const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+
+    /* the backdrop, painted on a canvas: an enchanted twilight vista */
+    const W = 1024, H = Math.round(W * MAP_H / MAP_W);
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const g = cv.getContext('2d');
+    const sky = g.createLinearGradient(0, 0, 0, H);
+    sky.addColorStop(0, '#0b1a33'); sky.addColorStop(0.35, '#1b3a5e'); sky.addColorStop(0.65, '#3d2f78'); sky.addColorStop(1, '#6a3f8a');
+    g.fillStyle = sky; g.fillRect(0, 0, W, H);
+
+    const blob = (x, y, r, rgb, a) => {
+      const grad = g.createRadialGradient(x, y, 0, x, y, r);
+      grad.addColorStop(0, `rgba(${rgb},${a})`);
+      grad.addColorStop(1, `rgba(${rgb},0)`);
+      g.fillStyle = grad; g.fillRect(x - r, y - r, r * 2, r * 2);
+    };
+
+    /* aurora ribbons */
+    g.globalCompositeOperation = 'lighter';
+    const ribbons = [[0.24, '70,255,190', 150, 2.1, 38], [0.38, '150,110,255', 130, 1.6, 30], [0.16, '120,220,255', 110, 2.6, 26]];
+    for (const [yBase, rgb, tall, freq, amp] of ribbons) {
+      const phase = rand() * 6.28;
+      for (let x = 0; x < W; x += 2) {
+        const y = H * yBase + Math.sin(x / W * Math.PI * freq + phase) * amp + Math.sin(x / W * 9 + phase) * 8;
+        const grad = g.createLinearGradient(0, y - tall, 0, y + tall * 0.5);
+        const edge = Math.sin(Math.min(1, Math.max(0, x / W)) * Math.PI);          // fade out toward the sides
+        grad.addColorStop(0, `rgba(${rgb},0)`);
+        grad.addColorStop(0.7, `rgba(${rgb},${0.26 * edge})`);
+        grad.addColorStop(1, `rgba(${rgb},0)`);
+        g.fillStyle = grad; g.fillRect(x, y - tall, 2, tall * 1.5);
+      }
+    }
+
+    /* slanting shafts of pale gold light */
+    for (let i = 0; i < 6; i++) {
+      const x0 = W * (0.02 + i * 0.17) + rand() * 40, w = 30 + rand() * 70, drift = W * 0.22;
+      const grad = g.createLinearGradient(x0, 0, x0 + drift, H);
+      grad.addColorStop(0, 'rgba(255,238,180,0.16)'); grad.addColorStop(1, 'rgba(255,238,180,0)');
+      g.fillStyle = grad;
+      g.beginPath(); g.moveTo(x0, 0); g.lineTo(x0 + w, 0); g.lineTo(x0 + w + drift * 1.3, H); g.lineTo(x0 + drift * 0.9, H); g.closePath(); g.fill();
+    }
+
+    /* bokeh orbs of drifting light */
+    const orbs = ['120,240,230', '255,170,230', '255,225,150', '170,150,255'];
+    for (let i = 0; i < 30; i++) {
+      const r = 14 + rand() * 46;
+      blob(rand() * W, rand() * H * 0.85, r, orbs[Math.floor(rand() * orbs.length)], 0.1 + rand() * 0.2);
+    }
+    g.globalCompositeOperation = 'source-over';
+
+    /* distant spires and towers in layers, with mist between them */
+    const mist = (y, rgb, a) => {
+      g.save(); g.translate(0, y); g.scale(3, 0.4);
+      for (let i = 0; i < 6; i++) blob((i / 6 + rand() * 0.1) * W / 3, 0, 150 + rand() * 90, rgb, a);
+      g.restore();
+    };
+    const range = (base, amp, color, towers) => {
+      g.fillStyle = color;
+      g.beginPath(); g.moveTo(0, H);
+      let x = 0;
+      while (x <= W) {
+        const spire = rand() < 0.14;
+        g.lineTo(x, base - (spire ? amp * (1.3 + rand() * 0.8) : rand() * amp * 0.55));
+        x += 14 + rand() * 30;
+      }
+      g.lineTo(W, H); g.closePath(); g.fill();
+      for (let i = 0; i < towers; i++) {                     // a tower with a pointed roof and lit windows
+        const tx = W * (0.08 + rand() * 0.84), tw = 12 + rand() * 10, th = amp * (1 + rand() * 0.9), top = base - th;
+        g.fillStyle = color;
+        g.fillRect(tx, top, tw, th + 20);
+        g.beginPath(); g.moveTo(tx - 3, top); g.lineTo(tx + tw / 2, top - tw * 1.7); g.lineTo(tx + tw + 3, top); g.closePath(); g.fill();
+        g.fillStyle = 'rgba(255,214,120,0.9)';
+        for (let w = 0; w < 3; w++) g.fillRect(tx + tw / 2 - 1.5, top + 8 + w * 14, 3, 5);
+      }
+    };
+    mist(H * 0.66, '170,160,255', 0.1);
+    range(H * 0.7, 110, 'rgba(34,30,92,0.55)', 0);
+    mist(H * 0.76, '190,170,255', 0.13);
+    range(H * 0.8, 90, 'rgba(24,20,70,0.75)', 4);
+    mist(H * 0.88, '200,180,255', 0.16);
+    range(H * 0.92, 60, 'rgba(14,12,46,0.92)', 0);
+    this.scene.background = new T.CanvasTexture(cv);
+
+    /* magic motes: soft glowing sparkles that rise around the island */
+    const dot = document.createElement('canvas');
+    dot.width = dot.height = 64;
+    const dg = dot.getContext('2d');
+    const dgr = dg.createRadialGradient(32, 32, 0, 32, 32, 32);
+    dgr.addColorStop(0, 'rgba(255,255,255,1)'); dgr.addColorStop(0.25, 'rgba(255,255,255,0.7)'); dgr.addColorStop(1, 'rgba(255,255,255,0)');
+    dg.fillStyle = dgr; dg.fillRect(0, 0, 64, 64);
+    const dotTex = new T.CanvasTexture(dot);
+    this.motes = [];
+    for (const [count, size, color] of [[170, 9, 0xffd878], [130, 8, 0x80f0ff], [110, 9, 0xff90e0]]) {
+      const pos = new Float32Array(count * 3);
+      const state = [];
+      for (let i = 0; i < count; i++) {
+        const ang = rand() * Math.PI * 2, r = 7 + Math.sqrt(rand()) * 17;
+        state.push({ x: COLS / 2 + Math.cos(ang) * r, y: -9 + rand() * 26, z: ROWS / 2 + Math.sin(ang) * r,
+                     v: 0.25 + rand() * 0.5, ph: rand() * 6.28 });
+      }
+      const geo = new T.BufferGeometry();
+      geo.setAttribute('position', new T.BufferAttribute(pos, 3));
+      const mat = new T.PointsMaterial({ size, sizeAttenuation: false, map: dotTex, color, transparent: true, opacity: 0.9,
+                                         blending: T.AdditiveBlending, depthWrite: false });
+      const pts = new T.Points(geo, mat);
+      pts.frustumCulled = false;
+      this.scene.add(pts);
+      this.motes.push({ pts, state, pos, mat, ph: rand() * 6.28 });
+    }
+
+    /* a slowly turning rune circle glowing beneath the island */
+    const rc = document.createElement('canvas');
+    rc.width = rc.height = 512;
+    const rg = rc.getContext('2d');
+    rg.translate(256, 256);
+    rg.strokeStyle = '#9ff0ff'; rg.fillStyle = '#9ff0ff';
+    rg.shadowColor = '#7ad8ff'; rg.shadowBlur = 10;
+    for (const [r, w] of [[240, 3], [226, 1.5], [170, 2], [120, 1.5]]) { rg.lineWidth = w; rg.beginPath(); rg.arc(0, 0, r, 0, Math.PI * 2); rg.stroke(); }
+    /* compass rose: tick marks round the dial, then four long points and four short
+       ones, each split into a filled half and an outlined half */
+    rg.lineWidth = 1.2;
+    for (let i = 0; i < 72; i++) {
+      const a = i * Math.PI * 2 / 72, r1 = i % 6 === 0 ? 154 : 162;
+      rg.beginPath();
+      rg.moveTo(Math.sin(a) * 170, -Math.cos(a) * 170);
+      rg.lineTo(Math.sin(a) * r1, -Math.cos(a) * r1);
+      rg.stroke();
+    }
+    const point = (ang, len, half, baseR) => {
+      rg.save();
+      rg.rotate(ang);
+      rg.fillStyle = 'rgba(159,240,255,0.5)';
+      rg.lineWidth = 1.6;
+      rg.beginPath(); rg.moveTo(0, -len); rg.lineTo(half, -baseR); rg.lineTo(0, 0); rg.closePath(); rg.fill(); rg.stroke();
+      rg.beginPath(); rg.moveTo(0, -len); rg.lineTo(-half, -baseR); rg.lineTo(0, 0); rg.closePath(); rg.stroke();
+      rg.restore();
+    };
+    for (let k = 0; k < 4; k++) point(Math.PI / 4 + k * Math.PI / 2, 150, 17, 46);   // intercardinal
+    for (let k = 0; k < 4; k++) point(k * Math.PI / 2, 214, 26, 60);                 // N, E, S, W
+    rg.lineWidth = 2;
+    rg.beginPath(); rg.arc(0, 0, 60, 0, Math.PI * 2); rg.stroke();
+    rg.beginPath(); rg.arc(0, 0, 14, 0, Math.PI * 2); rg.fill(); rg.stroke();
+    rg.fillStyle = '#9ff0ff';
+    for (let i = 0; i < 36; i++) {                              // runes between the outer rings
+      rg.save();
+      rg.rotate(i * Math.PI * 2 / 36);
+      rg.translate(0, -233);
+      rg.beginPath();
+      const k = (rand() * 4) | 0;
+      if (k === 0) { rg.moveTo(-3, -5); rg.lineTo(3, 5); rg.moveTo(3, -5); rg.lineTo(-3, 5); }
+      else if (k === 1) { rg.moveTo(0, -6); rg.lineTo(0, 6); rg.moveTo(-4, -1); rg.lineTo(4, -1); }
+      else if (k === 2) { rg.moveTo(-4, 5); rg.lineTo(0, -6); rg.lineTo(4, 5); }
+      else { rg.arc(0, 0, 4, 0, Math.PI * 1.6); }
+      rg.stroke();
+      rg.restore();
+    }
+    const runeTex = new T.CanvasTexture(rc);
+    this.rune = new T.Mesh(new T.PlaneGeometry(40, 40),
+      new T.MeshBasicMaterial({ map: runeTex, transparent: true, opacity: 0.8, blending: T.AdditiveBlending,
+                                depthWrite: false, side: T.DoubleSide }));
+    this.rune.rotation.x = -Math.PI / 2;
+    this.rune.position.set(COLS / 2, -7, ROWS / 2);
+    this.scene.add(this.rune);
+
+    /* the floating island: a tapering chunk of earth under the board */
+    const rockMat = this.mat('#6b5444'), deepMat = this.mat('#4d4141');
+    const island = new T.Group();
+    const jag = (geo, amt) => {                           // jitter vertices consistently, then facet the normals
+      const p = geo.attributes.position, seen = new Map();
+      for (let i = 0; i < p.count; i++) {
+        const x = p.getX(i), y = p.getY(i), z = p.getZ(i), key = `${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`;
+        let d = seen.get(key);
+        if (!d) { d = [(rand() - 0.5) * amt, (rand() - 0.5) * amt, (rand() - 0.5) * amt]; seen.set(key, d); }
+        p.setXYZ(i, x + d[0], y + d[1], z + d[2]);
+      }
+      geo.computeVertexNormals();
+      return geo;
+    };
+    const taper = (top, bottom, h, sx, sz, mat, y) => {
+      const geo = new T.CylinderGeometry(top, bottom, h, 4, 3);
+      geo.rotateY(Math.PI / 4);
+      geo.scale(sx, 1, sz);
+      const m = new T.Mesh(jag(geo.toNonIndexed(), 0.45), mat);
+      m.position.set(COLS / 2, y, ROWS / 2);
+      island.add(m);
+    };
+    const side = Math.SQRT2;                              // a 4-sided cylinder of radius r has side r*sqrt(2)
+    taper(1, 0.62, 1.4, (COLS + 0.4) / side, (ROWS + 0.4) / side, rockMat, -0.5 - 0.7);
+    taper(0.62, 0.0, 3.2, (COLS + 0.4) / side, (ROWS + 0.4) / side, deepMat, -0.5 - 1.4 - 1.6);
+    const under = new T.PointLight(0xb888ff, 1.0, 16, 1.6);
+    under.position.set(COLS / 2, -4.5, ROWS / 2);
+    island.add(under);
+    this.scene.add(island);
+
+    /* little floating islets, some with a tree */
+    this.islets = [];
+    const leaf = this.mat('#3f8f4a'), trunk = this.mat('#5a3a1a'), moss = this.mat('#5a9a3a');
+    const islets = [[-3.2, -1.8, 7.5, 0.6, 'tree'], [17.4, -2.6, 3.2, 0.75, 'tree'], [12, -4.2, 14.5, 0.5, 'tree'],
+                    [1.5, -3.6, -2.4, 0.42, 'tree'], [9, -6.2, 6.5, 0.34, null], [-1.8, 0.4, -2.6, 0.32, 'tree'],
+                    [16.2, 0.2, 12.6, 0.34, 'tree'], [19, -1.2, 9.5, 0.4, null]];
+    for (const [x, y, z, sc, deco] of islets) {
+      const grp = new T.Group();
+      const sx = sc * (0.9 + rand() * 0.4), sy = sc * (0.7 + rand() * 0.3), sz = sc * (0.9 + rand() * 0.4);
+      const rock = new T.Mesh(jag(new T.IcosahedronGeometry(1, 1), 0.45), rand() < 0.5 ? rockMat : deepMat);
+      rock.scale.set(sx, sy, sz);
+      grp.add(rock);
+      if (deco) {
+        const cap = this._mesh(this.shared.cyl, moss, sx * 0.85, 0.12, sz * 0.85, 0, sy * 0.82, 0);
+        grp.add(cap);
+        grp.add(this._cylinder(trunk, 0.05 * sc / 0.4, 0.3 * sc / 0.4, 0, sy * 0.88, 0, this.shared.cyl6));
+        grp.add(this._cone(leaf, 0.28 * sc / 0.4, 0.55 * sc / 0.4, 0, sy * 0.88 + 0.2 * sc / 0.4, 0));
+      }
+      grp.position.set(x, y, z);
+      this.scene.add(grp);
+      this.islets.push({ g: grp, y, phase: rand() * 6.28, speed: 0.3 + rand() * 0.4, spin: (rand() - 0.5) * 0.3 });
+    }
+  }
+
+  _updateSky(now, dt) {
+    for (const m of this.motes) {
+      const p = m.pos;
+      m.state.forEach((s, i) => {
+        s.y += s.v * dt;
+        if (s.y > 17) s.y = -9;                                         // rise out of sight, return from below
+        p[i * 3] = s.x + Math.sin(now * 0.6 + s.ph) * 0.5;
+        p[i * 3 + 1] = s.y;
+        p[i * 3 + 2] = s.z + Math.cos(now * 0.5 + s.ph) * 0.5;
+      });
+      m.pts.geometry.attributes.position.needsUpdate = true;
+      m.mat.opacity = 0.65 + 0.3 * Math.sin(now * 1.7 + m.ph);          // slow shimmer
+    }
+    this.rune.rotation.z = now * 0.08;
+    this.rune.material.opacity = 0.6 + 0.25 * Math.sin(now * 1.1);
+    for (const r of this.islets) {
+      r.g.position.y = r.y + Math.sin(now * r.speed + r.phase) * 0.18;
+      r.g.rotation.y += r.spin * dt;
     }
   }
 
@@ -727,28 +1049,19 @@ export class View3D {
   _updateCamera(dt) {
     const d = this.yawT - this.yaw;
     this.yaw = Math.abs(d) < 0.001 ? this.yawT : this.yaw + d * Math.min(1, dt * 9);
-    const cam = this.camera, ang = BASE_AZIMUTH + this.yaw, D = 40;
-    const cx = COLS / 2, cz = ROWS / 2;
-    cam.position.set(cx + Math.cos(ang) * D * Math.cos(PITCH), D * Math.sin(PITCH), cz + Math.sin(ang) * D * Math.cos(PITCH));
-    cam.lookAt(cx, 0, cz);
-    cam.updateMatrixWorld(true);
 
-    /* fit the whole board (plus its height) into the view */
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    const v = this.tmp;
-    for (const x of [-0.2, COLS + 0.2]) for (const z of [-0.2, ROWS + 0.2]) for (const y of [-0.55, this.topH + 0.1]) {
-      v.set(x, y, z).applyMatrix4(cam.matrixWorldInverse);
-      minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
-      minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
-    }
-    const m = 0.15;
-    let w = maxX - minX + m * 2, h = maxY - minY + m * 2;
-    const aspect = MAP_W / MAP_H;
-    if (w / h > aspect) h = w / aspect; else w = h * aspect;
-    const mx = (minX + maxX) / 2, my = (minY + maxY) / 2;
-    cam.left = mx - w / 2; cam.right = mx + w / 2; cam.top = my + h / 2; cam.bottom = my - h / 2;
+    /* the look-at point may wander, but not off the board */
+    const lx = COLS / 2 + 2, lz = ROWS / 2 + 2;
+    this.panV.x = Math.max(-lx, Math.min(lx, this.panV.x));
+    this.panV.z = Math.max(-lz, Math.min(lz, this.panV.z));
+
+    const cam = this.camera, ang = BASE_AZIMUTH + this.yaw, pitch = this.pitch, D = CAM_DIST;
+    const tx = COLS / 2 + this.panV.x, ty = 0.3, tz = ROWS / 2 + this.panV.z;
+    cam.position.set(tx + Math.cos(ang) * D * Math.cos(pitch), ty + D * Math.sin(pitch), tz + Math.sin(ang) * D * Math.cos(pitch));
+    cam.lookAt(tx, ty, tz);
+    cam.zoom = this.zoom;
     cam.updateProjectionMatrix();
-    this.unitPx = MAP_W / w;
+    cam.updateMatrixWorld(true);
   }
 
   /* ───────── per-frame entry point ───────── */
@@ -760,6 +1073,7 @@ export class View3D {
     this._syncTransform();
     this._updateCamera(dt);
     this._updateWater(now);
+    this._updateSky(now, dt);
     this._updateUnits(units, o, now, dt);
     this._updateItems(items || [], now);
     this._updateHighlights(o, now);
@@ -782,6 +1096,16 @@ export class View3D {
     const s = this.units.get(u.id);
     if (!s) return null;
     return this.project(s.x + 0.5, s.h + lift * s.scale, s.y + 0.5);
+  }
+
+  /* pixels per world unit at a unit's depth: perspective makes nearer units bigger */
+  unitScale(u) {
+    const s = this.units.get(u.id);
+    if (!s) return null;
+    const cam = this.camera;
+    cam.getWorldDirection(this.fwd);
+    const depth = this.tmp.set(s.x + 0.5, s.h, s.y + 0.5).sub(cam.position).dot(this.fwd);
+    return MAP_H / (2 * Math.tan(FOV * Math.PI / 360) / this.zoom * Math.max(0.1, depth));
   }
 
   unitFeet(u) {
