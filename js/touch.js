@@ -62,6 +62,10 @@ export class TouchController {
        its first layout pass and mobile viewport dimensions are settled */
     requestAnimationFrame(() => requestAnimationFrame(() => this._fitToScreen()));
 
+    /* re-fit when the space for the game changes (the view bar above it appearing or
+       disappearing, window or orientation changes) */
+    if (window.ResizeObserver) new ResizeObserver(() => this._fitToScreen()).observe(this.container);
+
     /* re-fit on window resize (orientation change, desktop resize) */
     window.addEventListener('resize', () => this._fitToScreen());
 
@@ -72,6 +76,12 @@ export class TouchController {
     }
   }
 
+  /* where the game area starts on the page (the view bar sits above it) */
+  _origin() {
+    const r = this.container.getBoundingClientRect();
+    return { x: r.left, y: r.top };
+  }
+
   /* public: re-run the fit calculation (e.g. after Game resizes the canvas) */
   refit() { this._fitToScreen(); }
 
@@ -80,9 +90,8 @@ export class TouchController {
     /* prefer visualViewport dimensions — on mobile these reflect the true
        visible area rather than the larger CSS viewport (which includes
        the browser chrome area that may not actually be visible) */
-    const vp = window.visualViewport;
-    const vw = vp ? vp.width  : window.innerWidth;
-    const vh = vp ? vp.height : window.innerHeight;
+    const vw = this.container.clientWidth;
+    const vh = this.container.clientHeight;
     const cw = this.cv.width;
     const ch = this.cv.height;
     /* clamp *before* computing pan — _applyTransform() re-clamps too, but
@@ -108,6 +117,8 @@ export class TouchController {
        y=0 at screen y=0) instead so the map is always shown in full */
     this.panY = cover ? 0 : (vh - ch * this.zoom) / 2;
     this._applyTransform();
+    /* tell the game where the canvas landed, so the view bar can sit over just the map */
+    if (this.onFit) this.onFit(this.panX, this.zoom, vw);
   }
 
   /* ── Zoom to a specific level centered on a screen point ── */
@@ -135,9 +146,8 @@ export class TouchController {
 
   /* ── Clamp pan so the canvas stays reachable ── */
   _clampPan() {
-    const vp = window.visualViewport;
-    const vw = vp ? vp.width  : window.innerWidth;
-    const vh = vp ? vp.height : window.innerHeight;
+    const vw = this.container.clientWidth;
+    const vh = this.container.clientHeight;
     const cw = this.cv.width * this.zoom;
     const ch = this.cv.height * this.zoom;
 
@@ -183,8 +193,9 @@ export class TouchController {
       this._startZoom = this.zoom;
       this._startPanX = this.panX;
       this._startPanY = this.panY;
-      this._startMidX = (a.clientX + b.clientX) / 2;
-      this._startMidY = (a.clientY + b.clientY) / 2;
+      const o = this._origin();
+      this._startMidX = (a.clientX + b.clientX) / 2 - o.x;
+      this._startMidY = (a.clientY + b.clientY) / 2 - o.y;
       this._moved = true; // pinch is never a tap
     }
   }
@@ -210,8 +221,9 @@ export class TouchController {
       /* pinch zoom + pan */
       const [a, b] = [e.touches[0], e.touches[1]];
       const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-      const midX = (a.clientX + b.clientX) / 2;
-      const midY = (a.clientY + b.clientY) / 2;
+      const o = this._origin();
+      const midX = (a.clientX + b.clientX) / 2 - o.x;
+      const midY = (a.clientY + b.clientY) / 2 - o.y;
 
       const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
         this._startZoom * (dist / this._startDist)));
@@ -246,7 +258,8 @@ export class TouchController {
           if (this.zoom > this._fitZoom * 1.2) {
             this._fitToScreen();
           } else {
-            this._zoomToPoint(ZOOM_IN_LEVEL, t.clientX, t.clientY);
+            const o = this._origin();
+            this._zoomToPoint(ZOOM_IN_LEVEL, t.clientX - o.x, t.clientY - o.y);
           }
           this._lastTapTime = 0;
           this._touches = [];

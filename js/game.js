@@ -13,6 +13,7 @@ import { planEnemyTurn }         from './ai.js';
 import { Renderer }              from './renderer.js';
 import { SFX, isMuted, toggleMute } from './audio.js';
 import { TouchController } from './touch.js';
+import { ViewBar } from './viewbar.js';
 
 /* XP awards — 100 XP per level (XP_PER_LEVEL in units.js) */
 const XP_MIN_HIT     = 3;   // floor for a landed hit, so chip damage still counts
@@ -24,6 +25,7 @@ const XP_STEAL       = 15;
 
 /* Battle pacing (ms). Each automatic action waits after the one before it so
    its log line and battle text can be read before the next thing happens. */
+const LEAP_FRAMES  = 60;    // a 3D level-transition leap lasts this many frames (1s)
 const ACTION_DELAY = 1000;  // after a strike, and after a kill / loot message
 const FINISH_DELAY = 500;   // after the last strike of a player's own attack — control returns right after
 const MOVE_DELAY   = 600;   // an enemy walking somewhere: nothing new to read, but you want to see it move
@@ -141,6 +143,17 @@ class Game {
 
     /* mobile touch support — pinch-zoom, pan, tap-to-play */
     this.touch = new TouchController(this.cv, this);
+    /* the 2D | 3D switch and camera buttons above the playfield */
+    this.ren.bar = new ViewBar(document.getElementById('viewbar'), {
+      onMode: on3d => { this.ren.setMode3d(on3d); SFX.select(); },
+      onTool: name => this._viewTool(name),
+    });
+    /* the bar spans only the map (in landscape the info panel sits to its right) */
+    this.touch.onFit = (panX, zoom, vw) => {
+      const left = Math.max(0, panX);
+      this.ren.bar.place(left, Math.min(COLS * TILE * zoom, vw - left));
+    };
+    this.touch.refit();
     /* re-fit the view whenever the renderer resizes the canvas (orientation
        change flipping the info pane between beside/below the map) */
     this.ren.onResize = () => this.touch.refit();
@@ -354,31 +367,18 @@ class Game {
     return { cx: Math.floor(px / TILE), cy: Math.floor(py / TILE) };
   }
 
-  /* 2D | 3D switch and rotate buttons — true if the click was one of them */
-  _clickViewBtns(px, py) {
-    const b = this.ren._viewBtns;
-    if (!b) return false;
-    const hit = r => r && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
-    if (hit(b.mode)) {
-      const left = px < b.mode.x + b.mode.w / 2;     /* left half = 2D, right half = 3D */
-      if (left === !this.ren.mode3d) return true;
-      this.ren.setMode3d(!left);
-      SFX.select();
-      return true;
-    }
+  /* a camera button on the view bar */
+  _viewTool(name) {
     const v3 = this.ren._v3;
-    for (const [name, r] of Object.entries(b.btns)) {
-      if (!hit(r) || !v3) continue;
-      if      (name === 'rotLeft')  v3.rotate(-1);
-      else if (name === 'rotRight') v3.rotate(1);
-      else if (name === 'tiltUp')   v3.tilt(1);
-      else if (name === 'tiltDown') v3.tilt(-1);
-      else if (name === 'zoomIn')   v3.zoomBy(1.25);
-      else if (name === 'zoomOut')  v3.zoomBy(1 / 1.25);
-      else if (name === 'reset')    v3.reset();
-      return true;
-    }
-    return false;
+    if (!v3) return;
+    if      (name === 'rotLeft')  v3.rotate(-1);
+    else if (name === 'rotRight') v3.rotate(1);
+    else if (name === 'tiltUp')   v3.tilt(1);
+    else if (name === 'tiltDown') v3.tilt(-1);
+    else if (name === 'zoomIn')   v3.zoomBy(1.25);
+    else if (name === 'zoomOut')  v3.zoomBy(1 / 1.25);
+    else if (name === 'reset')    v3.reset();
+    SFX.select();
   }
 
   /* ── 3D camera by mouse: a drag that starts on the board pans it; one that starts in the
@@ -388,9 +388,6 @@ class Game {
     if (!v3 || (e.button !== 0 && e.button !== 1)) return;
     const { px, py } = this._px(e);
     if (px < 0 || py < 0 || px >= COLS * TILE || py >= ROWS * TILE) return;
-    const b = this.ren._viewBtns;
-    const onBtn = r => r && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
-    if (b && (onBtn(b.mode) || Object.values(b.btns).some(onBtn))) return;
     if (e.button === 1) e.preventDefault();
     this._drag3d = { px, py, cx: e.clientX, cy: e.clientY, moved: false,
                      pan: e.button === 1 || e.shiftKey || !!v3.pick(px, py) };
@@ -444,8 +441,6 @@ class Game {
     const sb = this.ren.soundBtn;
     if (sb && px >= sb.x && px <= sb.x + sb.w && py >= sb.y && py <= sb.y + sb.h) { toggleMute(); return; }
 
-    /* 2D / 3D view switch — always available during play */
-    if (this._clickViewBtns(px, py)) return;
 
     /* ── history view intercepts all clicks ── */
     if (this._historyView) {
@@ -1109,6 +1104,9 @@ class Game {
     const alive = this.players.filter(p => p.alive);
     if (!alive.length) { this.floor++; this._startLevel(); return; }
 
+    /* 3D: the party leaps off the board and out of the picture */
+    if (this.ren.active3d) { this._beginLeapOut(alive); return; }
+
     /* Sort so rightmost units lead the march */
     alive.sort((a, b) => b.x - a.x);
 
@@ -1137,6 +1135,9 @@ class Game {
     const spawns = this.map.playerSpawns;
     if (!alive.length) { this.state = S_IDLE; return; }
 
+    /* 3D: the party lands on the new board from the sky */
+    if (this.ren.active3d) { this._beginLeapIn(alive, spawns); return; }
+
     /* Each walker has its own path: enter from the left, walk to their spawn */
     const walkers = alive.map((u, i) => {
       const sp = spawns[i % spawns.length];
@@ -1159,6 +1160,42 @@ class Game {
     this.state = S_TRANS_IN;
   }
 
+  /* ── 3D level transitions: a leap off the old board, a landing on the new one ──
+     Each unit follows a ballistic arc toward the right of the screen, so the jump
+     reads the same from any camera angle: out of the picture on the way out, and
+     down onto its starting tile on the way in. The unit's `jump` pose
+     ({x, y, lift, dx, dz}) is what the 3D view draws. */
+  _beginLeapOut(alive) {
+    const [rx, rz] = this.ren.active3d.screenRight();
+    const walkers = alive.map((u, i) => ({ unit: u, leap: 'out', sx: u.x, sy: u.y, rx, rz, delay: i * 10 }));
+    this.trans = { walkers, step: 0, speed: 8, dir: 'out' };
+    this.state = S_TRANS_OUT;
+    this._deselect();
+    SFX.transitionMelody();
+  }
+
+  _beginLeapIn(alive, spawns) {
+    const [rx, rz] = this.ren.active3d.screenRight();
+    const walkers = alive.map((u, i) => {
+      const sp = spawns[i % spawns.length];
+      u.x = sp.x; u.y = sp.y;                    /* the tile they will land on */
+      const w = { unit: u, leap: 'in', sx: sp.x, sy: sp.y, rx, rz, delay: i * 10 };
+      u.jump = this._leapPose(w, 0);             /* waiting up in the sky until their turn */
+      return w;
+    });
+    this.trans = { walkers, step: 0, speed: 8, dir: 'in' };
+    this.state = S_TRANS_IN;
+  }
+
+  /* where a leaping unit is at progress t (0..1) */
+  _leapPose(w, t) {
+    const DIST = 14, HEIGHT = 18;                /* ground distance covered, and height reached/dropped from */
+    if (w.leap === 'out') {
+      return { x: w.sx + w.rx * DIST * t, y: w.sy + w.rz * DIST * t, lift: HEIGHT * t * (2 - t), dx: w.rx, dz: w.rz };
+    }
+    return { x: w.sx - w.rx * DIST * (1 - t), y: w.sy - w.rz * DIST * (1 - t), lift: HEIGHT * (1 - t * t), dx: w.rx, dz: w.rz };
+  }
+
   _stepTransition() {
     const tr = this.trans;
     if (!tr) return;
@@ -1167,6 +1204,21 @@ class Game {
     let allDone = true;
     for (const w of tr.walkers) {
       const eff = tr.step - w.delay;
+
+      /* 3D leap */
+      if (w.leap) {
+        if (w.gone) continue;
+        allDone = false;
+        if (eff <= 0) continue;
+        const t = Math.min(1, eff / LEAP_FRAMES);
+        w.unit.jump = this._leapPose(w, t);
+        if (t >= 1) {
+          w.gone = true;
+          if (w.leap === 'in') w.unit.jump = null;     /* landed */
+        }
+        continue;
+      }
+
       if (eff <= 0) { allDone = false; continue; }
 
       /* advance one tile every `speed` frames */
@@ -1193,6 +1245,7 @@ class Game {
         this.players.filter(p => p.alive).forEach((u, i) => {
           const sp = spawns[i % spawns.length];
           u.x = sp.x; u.y = sp.y;
+          u.jump = null;
         });
         this.trans = null;
         this.state = S_IDLE;

@@ -83,13 +83,19 @@ export class Renderer {
     /* ── 3D isometric view (see view3d.js) ──
        mode3d is the player's choice; view3d only exists once three.js has
        loaded, and the flat 2D map is drawn whenever it is not ready. */
-    this.mode3d = true;
-    try { if (localStorage.getItem('emblemtactics_view') === '2d') this.mode3d = false; } catch (e) { /* no storage */ }
+    /* the default depends on the device — 3D on desktop, flat 2D on a phone or tablet
+       (touch is the primary input) — and a choice the player made earlier wins */
+    const touchDevice = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches);
+    this.mode3d = !touchDevice;
+    try {
+      const saved = localStorage.getItem('emblemtactics_view');
+      if (saved === '2d' || saved === '3d') this.mode3d = saved === '3d';
+    } catch (e) { /* no storage */ }
     this.view3d = null;
     this._v3state = 'idle';   /* idle | loading | ready | failed */
     this._v3 = null;          /* the View3D in use this frame, or null while drawing 2D */
     this._v3units = [];       /* units drawn by the 3D scene this frame (for HP bars / labels) */
-    this._viewBtns = null;    /* {mode, left, right} bounds of the 2D/3D switch and rotate buttons */
+    this.bar = null;          /* the HTML view bar above the playfield (set by Game) */
   }
 
   /* ═══════════ 2D / 3D SWITCH ═══════════ */
@@ -128,9 +134,9 @@ export class Renderer {
      Bonus/Victory keep the fixed widescreen canvas — they're full-bleed
      art screens with no responsive layout of their own. */
   _applyLayout(g) {
-    const vp = window.visualViewport;
-    const vw = vp ? vp.width  : window.innerWidth;
-    const vh = vp ? vp.height : window.innerHeight;
+    const box = this.cv.parentElement;       /* the game area, below the view bar */
+    const vw = box.clientWidth  || window.innerWidth;
+    const vh = box.clientHeight || window.innerHeight;
     const portrait = vh > vw;
     const gameplay = g.state !== S_TITLE && g.state !== S_DRAFT &&
                      g.state !== S_BONUS && g.state !== S_VICTORY;
@@ -207,7 +213,7 @@ export class Renderer {
                      g.state !== S_BONUS && g.state !== S_VICTORY;
     this._v3 = this._active3d(gameplay);
     if (this.view3d) this.view3d.show(!!this._v3);
-    this._viewBtns = null;
+    this._syncViewBar(gameplay);
 
     if (g.state === S_TITLE) {
       this._title(g);
@@ -237,7 +243,6 @@ export class Renderer {
         this._unitsFromSnap(snap);
       }
       this._historyOverlay(g);
-      this._viewSwitch(g);
       this._sidebar(g);
       return;
     }
@@ -250,7 +255,6 @@ export class Renderer {
       this._units(g);
       this._cursor(g);
     }
-    this._viewSwitch(g);
     this._sidebar(g);
     if (g.state === S_ACTION_MENU) this._menu(g);
     if (g.state === S_ATK_SELECT) this._atkPrompt();
@@ -312,78 +316,15 @@ export class Renderer {
     }
   }
 
-  /* 2D | 3D switch in the map's bottom-right corner; in 3D, camera buttons
-     (rotate, tilt, zoom, reset) to its left. Bounds go to _viewBtns for Game._clickViewBtns. */
-  _viewSwitch(g) {
-    if (g.state === S_WIN || g.state === S_LOSE) return;
-    const c = this.cx;
-    const k = Math.max(1, this._sideRect.scale * 0.9);
-    const mapW = COLS * TILE, mapH = ROWS * TILE;
-    const bh = 28 * k, hw = 38 * k, gap = 5 * k, edge = 8 * k;
-    const mx = mapW - edge - hw * 2, my = mapH - edge - bh;
-    const on3d = !!this._v3;
+  /* The 3D view if the player is using it and it has loaded, whatever screen is showing
+     right now (unlike _v3, which is only set on frames that draw the board). */
+  get active3d() {
+    return this.mode3d && this._v3state === 'ready' ? this.view3d : null;
+  }
 
-    c.save();
-    c.textAlign = 'center';
-    c.font = `${9 * k}px ${FONT}`;
-    /* a dark plate behind the switch so it stands out from any terrain */
-    c.fillStyle = 'rgba(4,4,24,0.78)'; c.fillRect(mx - 4 * k, my - 4 * k, hw * 2 + 8 * k, bh + 8 * k);
-    c.strokeStyle = '#6080d0'; c.lineWidth = 1.5; c.strokeRect(mx - 4 * k, my - 4 * k, hw * 2 + 8 * k, bh + 8 * k);
-    [['2D', mx, !on3d], ['3D', mx + hw, on3d]].forEach(([label, x, active]) => {
-      c.fillStyle = active ? '#3a66ff' : '#14143a'; c.fillRect(x, my, hw, bh);
-      if (active) { c.fillStyle = 'rgba(255,255,255,0.18)'; c.fillRect(x, my, hw, bh / 2); }
-      c.strokeStyle = active ? '#ffffff' : '#5870b0'; c.lineWidth = active ? 2 : 1; c.strokeRect(x, my, hw, bh);
-      c.fillStyle = active ? '#ffffff' : '#a8baf0';
-      c.fillText(label, x + hw / 2, my + bh / 2 + 3.5 * k);
-    });
-    this._viewBtns = { mode: { x: mx, y: my, w: hw * 2, h: bh }, btns: {} };
-
-    if (on3d) {
-      const lw = Math.max(2, k * 1.5), ic = '#80a0ff';
-      const turn = dir => {                          /* curved arrow, mirrored for the other way */
-        c.scale(dir, 1);
-        const r = bh * 0.27, ca = Math.cos(0.9), sa = Math.sin(0.9), h = bh * 0.2;
-        c.beginPath(); c.arc(0, 0, r, -2.3, 0.9); c.stroke();
-        c.beginPath();
-        c.moveTo(ca * r - sa * h * 1.2, sa * r + ca * h * 1.2);
-        c.lineTo(ca * r + ca * h * 0.8, sa * r + sa * h * 0.8);
-        c.lineTo(ca * r - ca * h * 0.8, sa * r - sa * h * 0.8);
-        c.closePath(); c.fill();
-      };
-      const tri = dir => {                           /* up / down triangle */
-        const r = bh * 0.24;
-        c.beginPath(); c.moveTo(0, -dir * r); c.lineTo(r, dir * r * 0.7); c.lineTo(-r, dir * r * 0.7); c.closePath(); c.fill();
-      };
-      const bar = plus => {                          /* - / + */
-        const r = bh * 0.26;
-        c.beginPath(); c.moveTo(-r, 0); c.lineTo(r, 0); if (plus) { c.moveTo(0, -r); c.lineTo(0, r); } c.stroke();
-      };
-      const fit = () => {                            /* corner brackets: back to the default view */
-        const r = bh * 0.26, l = bh * 0.14;
-        c.beginPath();
-        for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-          c.moveTo(sx * r, sy * (r - l)); c.lineTo(sx * r, sy * r); c.lineTo(sx * (r - l), sy * r);
-        }
-        c.stroke();
-      };
-      /* drawn right to left, ending just left of the switch */
-      const defs = [['reset', fit], ['zoomIn', () => bar(true)], ['zoomOut', () => bar(false)],
-                    ['tiltDown', () => tri(-1)], ['tiltUp', () => tri(1)],
-                    ['rotRight', () => turn(1)], ['rotLeft', () => turn(-1)]];
-      let x = mx - gap - bh;
-      for (const [name, draw] of defs) {
-        c.fillStyle = 'rgba(4,4,24,0.78)'; c.fillRect(x, my, bh, bh);
-        c.strokeStyle = '#5870b0'; c.lineWidth = 1.5; c.strokeRect(x, my, bh, bh);
-        c.save();
-        c.translate(x + bh / 2, my + bh / 2);
-        c.strokeStyle = ic; c.fillStyle = ic; c.lineWidth = lw;
-        draw();
-        c.restore();
-        this._viewBtns.btns[name] = { x, y: my, w: bh, h: bh };
-        x -= gap + bh;
-      }
-    }
-    c.restore();
+  /* keep the HTML view bar above the playfield in step with the game */
+  _syncViewBar(gameplay) {
+    if (this.bar) this.bar.update({ visible: gameplay, mode3d: this.mode3d, tools: !!this._v3 });
   }
 
   /* ── coloured text runs [{t, c?}] — unit names carry their own colour, the

@@ -871,7 +871,7 @@ export class View3D {
 
     this.scene.add(group);
     return {
-      group, model, rider, legs, arms, horse, mats: m, sel, tgt, tag, scale, lift, mounted,
+      group, model, rider, legs, arms, horse, mats: m, sel, tgt, tag, scale, lift, mounted, ring, air: 0,
       x: u.x, y: u.y, h: this.surfaceAt(Math.round(u.x), Math.round(u.y)),
       face: u.isPlayer ? 0 : Math.PI, phase: 0, gait: 0, done: null, dying: 0, alive: true,
     };
@@ -907,10 +907,17 @@ export class View3D {
       const k = Math.min(1, dt * 9);
       s.x += dx * k; s.y += dz * k;
       const dist = Math.hypot(u.x - s.x, u.y - s.y);
-      const moving = dist > 0.04;
+      const jp = u.jump;                       // mid-leap in a level transition: placed directly
+      const moving = !jp && dist > 0.04;
       if (moving) s.face = this._turn(s.face, Math.atan2(-dz, dx), dt * 14);
+      if (jp) {
+        s.x = jp.x; s.y = jp.y;
+        s.face = this._turn(s.face, Math.atan2(-jp.dz, jp.dx), dt * 10);
+      }
       const hTarget = this.surfaceAt(Math.round(s.x), Math.round(s.y));
-      s.h += (hTarget - s.h) * Math.min(1, dt * 14);
+      s.h += (hTarget - s.h) * (jp ? 1 : Math.min(1, dt * 14));
+      const air = jp ? jp.lift : 0;
+      s.air = air;
 
       /* attacker lunges at the defender; defender shudders */
       let lx = 0, lz = 0, hit = 0, swing = 0;
@@ -938,6 +945,10 @@ export class View3D {
       s.arms[0].rotation.z = -sw * 0.6;
       s.arms[1].rotation.z = sw * 0.6 + swing * 1.5;
       s.horse.forEach((p, i) => { p.rotation.z = (i % 2 ? -1 : 1) * (i < 2 ? 1 : -1) * sw * 0.7; });
+      if (air > 0.25) {                        // airborne: arms thrown up, legs tucked
+        for (const a of s.arms) a.rotation.z = 2.5;
+        for (const l of s.legs) l.rotation.z = 0.8;
+      }
 
       const done = !!(u.isPlayer && u.done);
       if (s.done !== done) {
@@ -953,7 +964,11 @@ export class View3D {
       const bounce = selected ? Math.abs(Math.sin(now * 5)) * 0.12 : 0;
       const bob = done ? 0 : Math.sin(now * 2.6 + u.id) * 0.012;
       const hop = Math.abs(sw) * 0.07;
-      s.group.position.set(s.x + 0.5 + lx, s.h, s.y + 0.5 + lz);
+      s.group.position.set(s.x + 0.5 + lx, s.h + air, s.y + 0.5 + lz);
+      s.ring.position.y = 0.02 - air;          // the team ring stays on the ground
+      /* ...but not out over empty space, where it would hang in the void */
+      const offBoard = jp && (jp.x < -0.5 || jp.x >= COLS - 0.5 || jp.y < -0.5 || jp.y >= ROWS - 0.5);
+      s.ring.visible = !offBoard;
       s.model.position.y = bob + hop + bounce;
       s.model.rotation.y = s.face;
       s.model.scale.setScalar(s.scale);
@@ -1112,11 +1127,17 @@ export class View3D {
     return this.project(tx + 0.5, this.surfaceAt(tx, ty) + lift, ty + 0.5);
   }
 
+  /* the ground direction that points to the right of the screen, as a unit vector [x, z] */
+  screenRight() {
+    const a = BASE_AZIMUTH + this.yaw;
+    return [Math.sin(a), -Math.cos(a)];
+  }
+
   /* where a unit's head is on screen right now (follows its glide), or null */
   unitAnchor(u, lift = 1.0) {
     const s = this.units.get(u.id);
     if (!s) return null;
-    return this.project(s.x + 0.5, s.h + lift * s.scale, s.y + 0.5);
+    return this.project(s.x + 0.5, s.h + s.air + lift * s.scale, s.y + 0.5);
   }
 
   /* pixels per world unit at a unit's depth: perspective makes nearer units bigger */
@@ -1125,14 +1146,14 @@ export class View3D {
     if (!s) return null;
     const cam = this.camera;
     cam.getWorldDirection(this.fwd);
-    const depth = this.tmp.set(s.x + 0.5, s.h, s.y + 0.5).sub(cam.position).dot(this.fwd);
+    const depth = this.tmp.set(s.x + 0.5, s.h + s.air, s.y + 0.5).sub(cam.position).dot(this.fwd);
     return MAP_H / (2 * Math.tan(FOV * Math.PI / 360) / this.zoom * Math.max(0.1, depth));
   }
 
   unitFeet(u) {
     const s = this.units.get(u.id);
     if (!s) return null;
-    return this.project(s.x + 0.5, s.h, s.y + 0.5);
+    return this.project(s.x + 0.5, s.h + s.air, s.y + 0.5);
   }
 
   /* the tile under a pixel of the 2D canvas, or null */

@@ -17,11 +17,11 @@ Try the [demo](https://pataltimore.github.io/trpg-roguelike/).
 - **Enemy AI**: Mix of aggressive and guard-mode enemies with threat range awareness
 
 ### 2D and 3D views
-The map can be drawn flat (2D) or as a low-poly **3D isometric** board. The game starts in 3D; use the **2D | 3D** switch in the map's bottom-right corner (or press **V**) to change. Clicking, hovering, move/attack ranges and the play log all work the same in both views, and your choice is remembered.
+The map can be drawn flat (2D) or as a low-poly **3D isometric** board. The game starts in 3D on desktop and in 2D on phones and tablets; use the **2D | 3D** switch in the bar above the map (or press **V**) to change. Clicking, hovering, move/attack ranges and the play log all work the same in both views, and your choice is remembered.
 
 In 3D you can move the camera:
 - **Mouse wheel** zooms toward the cursor. **Drag the board** to pan it; **drag in the space around it** to rotate and tilt the view. (Shift-drag or middle-drag always pans.)
-- The buttons next to the switch rotate in quarter turns, tilt, zoom in/out, and reset the view.
+- The buttons on the right of that bar (it sits over the map only) rotate in quarter turns, tilt, zoom in/out, and reset the view.
 - Keys: **Q** / **E** rotate, **+** / **-** zoom, **R** resets.
 
 The 3D view loads [three.js](https://threejs.org) from a CDN on first use; if it can't load, the game stays in 2D.
