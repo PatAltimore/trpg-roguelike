@@ -106,6 +106,13 @@ export class View3D {
     this.units = new Map();
     this.items = [];
     this.matCache = new Map();
+    /* cel shading: light falls into a few flat bands instead of a smooth gradient */
+    const ramp = new T.DataTexture(new Uint8Array([70, 150, 215, 255]), 4, 1, T.LuminanceFormat);
+    ramp.minFilter = ramp.magFilter = T.NearestFilter;
+    ramp.generateMipmaps = false;
+    ramp.needsUpdate = true;
+    this.toon = ramp;
+    this.ink = new T.MeshBasicMaterial({ color: '#0d0a1c', side: T.BackSide });   // outline: an inflated back-face shell
     this.shared = this._sharedGeos();
 
     this.yaw = 0; this.yawT = 0;     // board rotation (radians); yawT is where it is easing to
@@ -235,14 +242,14 @@ export class View3D {
     return g;
   }
 
-  /* Lambert material, cached by colour (+ optional lightness variant) */
+  /* cel-shaded material, cached by colour (+ optional lightness variant) */
   mat(hex, shade = 0, opts = null) {
     const key = `${hex}|${shade}|${opts ? JSON.stringify(opts) : ''}`;
     let m = this.matCache.get(key);
     if (!m) {
       const c = new this.T.Color(hex);
       if (shade) c.offsetHSL(0, 0, shade * 0.03);
-      m = new this.T.MeshLambertMaterial(Object.assign({ color: c }, opts || {}));
+      m = new this.T.MeshToonMaterial(Object.assign({ color: c, gradientMap: this.toon }, opts || {}));
       this.matCache.set(key, m);
     }
     return m;
@@ -253,6 +260,19 @@ export class View3D {
     m.scale.set(sx, sy, sz);
     m.position.set(px, py, pz);
     return m;
+  }
+
+  /* Draw a dark outline around `mesh` (a slightly larger back-face copy of it, added beside it).
+     Tiny parts are left out so they don't turn into black blobs. */
+  _inked(parent, mesh, minVolume = 0.008) {
+    const s = mesh.scale;
+    if (s.x * s.y * s.z < minVolume) return;
+    const t = mesh.geometry === this.shared.box ? 0.06 : 0.035;
+    const hull = new this.T.Mesh(mesh.geometry, this.ink);
+    hull.position.copy(mesh.position);
+    hull.rotation.copy(mesh.rotation);
+    hull.scale.set(s.x + t, s.y + t, s.z + t);
+    parent.add(hull);
   }
 
   /* axis-aligned box sitting on bottom y=py, centred on (px, pz) */
@@ -319,6 +339,7 @@ export class View3D {
       mesh.castShadow = cast;
       mesh.receiveShadow = true;
       g.add(mesh);
+      this._inked(g, mesh);
       this.pickables.push(mesh);
       return mesh;
     };
@@ -716,9 +737,9 @@ export class View3D {
     const T = this.T, S = this.shared;
     const hue = u.hue, key = u.key;
     const m = {
-      body: new T.MeshLambertMaterial({ color: hue }),
-      skin: new T.MeshLambertMaterial({ color: '#f0c890' }),
-      helm: new T.MeshLambertMaterial({ color: HELM[key] || '#888888' }),
+      body: new T.MeshToonMaterial({ color: hue, gradientMap: this.toon }),
+      skin: new T.MeshToonMaterial({ color: '#f0c890', gradientMap: this.toon }),
+      helm: new T.MeshToonMaterial({ color: HELM[key] || '#888888', gradientMap: this.toon }),
       ring: new T.MeshBasicMaterial({ color: u.isPlayer ? 0x5a86ff : 0xff5a5a }),
     };
     const dark = this.mat('#25252d'), steel = this.mat('#c8ccd4'), wood = this.mat('#6a4524');
@@ -728,7 +749,7 @@ export class View3D {
 
     const tag = { x: u.x, y: u.y };
     const cast = (mesh) => { mesh.castShadow = true; mesh.userData.tile = tag; this.pickables.push(mesh); return mesh; };
-    const part = (parent, mesh) => { parent.add(cast(mesh)); return mesh; };
+    const part = (parent, mesh) => { parent.add(cast(mesh)); this._inked(parent, mesh, 0.003); return mesh; };
 
     const mounted = key === 'CAVALIER';
     const lift = mounted ? 0.3 : 0;

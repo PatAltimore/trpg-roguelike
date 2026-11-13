@@ -83,8 +83,8 @@ export class Renderer {
     /* ── 3D isometric view (see view3d.js) ──
        mode3d is the player's choice; view3d only exists once three.js has
        loaded, and the flat 2D map is drawn whenever it is not ready. */
-    this.mode3d = false;
-    try { this.mode3d = localStorage.getItem('emblemtactics_view') === '3d'; } catch (e) { /* no storage */ }
+    this.mode3d = true;
+    try { if (localStorage.getItem('emblemtactics_view') === '2d') this.mode3d = false; } catch (e) { /* no storage */ }
     this.view3d = null;
     this._v3state = 'idle';   /* idle | loading | ready | failed */
     this._v3 = null;          /* the View3D in use this frame, or null while drawing 2D */
@@ -319,18 +319,22 @@ export class Renderer {
     const c = this.cx;
     const k = Math.max(1, this._sideRect.scale * 0.9);
     const mapW = COLS * TILE, mapH = ROWS * TILE;
-    const bh = 24 * k, hw = 30 * k, gap = 5 * k, edge = 8 * k;
+    const bh = 28 * k, hw = 38 * k, gap = 5 * k, edge = 8 * k;
     const mx = mapW - edge - hw * 2, my = mapH - edge - bh;
     const on3d = !!this._v3;
 
     c.save();
     c.textAlign = 'center';
-    c.font = `${7 * k}px ${FONT}`;
+    c.font = `${9 * k}px ${FONT}`;
+    /* a dark plate behind the switch so it stands out from any terrain */
+    c.fillStyle = 'rgba(4,4,24,0.78)'; c.fillRect(mx - 4 * k, my - 4 * k, hw * 2 + 8 * k, bh + 8 * k);
+    c.strokeStyle = '#6080d0'; c.lineWidth = 1.5; c.strokeRect(mx - 4 * k, my - 4 * k, hw * 2 + 8 * k, bh + 8 * k);
     [['2D', mx, !on3d], ['3D', mx + hw, on3d]].forEach(([label, x, active]) => {
-      c.fillStyle = active ? '#2a3a80' : '#101020'; c.fillRect(x, my, hw, bh);
-      c.strokeStyle = active ? '#80a0ff' : '#404060'; c.lineWidth = 1; c.strokeRect(x, my, hw, bh);
-      c.fillStyle = active ? '#ffffff' : '#7080a0';
-      c.fillText(label, x + hw / 2, my + bh / 2 + 3 * k);
+      c.fillStyle = active ? '#3a66ff' : '#14143a'; c.fillRect(x, my, hw, bh);
+      if (active) { c.fillStyle = 'rgba(255,255,255,0.18)'; c.fillRect(x, my, hw, bh / 2); }
+      c.strokeStyle = active ? '#ffffff' : '#5870b0'; c.lineWidth = active ? 2 : 1; c.strokeRect(x, my, hw, bh);
+      c.fillStyle = active ? '#ffffff' : '#a8baf0';
+      c.fillText(label, x + hw / 2, my + bh / 2 + 3.5 * k);
     });
     this._viewBtns = { mode: { x: mx, y: my, w: hw * 2, h: bh }, btns: {} };
 
@@ -368,8 +372,8 @@ export class Renderer {
                     ['rotRight', () => turn(1)], ['rotLeft', () => turn(-1)]];
       let x = mx - gap - bh;
       for (const [name, draw] of defs) {
-        c.fillStyle = '#101020'; c.fillRect(x, my, bh, bh);
-        c.strokeStyle = '#404060'; c.lineWidth = 1; c.strokeRect(x, my, bh, bh);
+        c.fillStyle = 'rgba(4,4,24,0.78)'; c.fillRect(x, my, bh, bh);
+        c.strokeStyle = '#5870b0'; c.lineWidth = 1.5; c.strokeRect(x, my, bh, bh);
         c.save();
         c.translate(x + bh / 2, my + bh / 2);
         c.strokeStyle = ic; c.fillStyle = ic; c.lineWidth = lw;
